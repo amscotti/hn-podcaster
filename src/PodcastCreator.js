@@ -3,6 +3,7 @@ import { loadSummarizationChain, LLMChain } from 'langchain/chains'
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter'
 import { PromptTemplate } from 'langchain/prompts'
 import { CheerioWebBaseLoader } from 'langchain/document_loaders/web/cheerio'
+import { HtmlToTextTransformer } from 'langchain/document_transformers/html_to_text'
 
 const SUMMARIES_COMBINATION_PROMPT = new PromptTemplate({
   inputVariables: ['text'],
@@ -13,6 +14,8 @@ const SUMMARIES_COMBINATION_PROMPT = new PromptTemplate({
   However, even if the original text is short, your summary should still be a minimum of one paragraph in length.
   
   Your output should strictly contain the summarized text. Exclude any additional elements or formats - focus solely on delivering a brief, comprehensive rendition of the original content.
+
+  "{text}"
   
   SUMMARY:`
 })
@@ -36,24 +39,24 @@ const GENERATE_PODCAST_PROMPT = new PromptTemplate({
 })
 
 export default class PodcastCreator {
-  constructor ({ apiKey }) {
+  constructor () {
     const gpt35Turbo16k = new OpenAI({
-      openAIApiKey: apiKey,
       modelName: 'gpt-3.5-turbo-16k',
       temperature: 0.7
     })
 
     const gpt4 = new OpenAI({
-      openAIApiKey: apiKey,
       modelName: 'gpt-4',
       temperature: 1
     })
 
     // Used for creating summaries
-    this.textSplitter = new RecursiveCharacterTextSplitter({
+    const splitter = new RecursiveCharacterTextSplitter({
       chunkSize: 5000,
       chunkOverlap: 1000
     })
+    const htmlToText = new HtmlToTextTransformer()
+    this.sequence = htmlToText.pipe(splitter)
 
     this.summarizer = loadSummarizationChain(gpt35Turbo16k, {
       type: 'map_reduce',
@@ -77,7 +80,7 @@ export default class PodcastCreator {
   }
 
   async generateSummary (text) {
-    const docs = await this.textSplitter.splitDocuments(text)
+    const docs = await this.sequence.invoke(text)
     const res = await this.summarizer.call({ input_documents: docs })
 
     return res.text
@@ -85,7 +88,7 @@ export default class PodcastCreator {
 
   async generatePodcast (summaries) {
     const res = await this.podcastGenerator.call({ text: summaries.join('\n') })
-    
+
     return res.text
   }
 }

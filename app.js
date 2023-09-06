@@ -9,9 +9,7 @@ if (!process.env.OPENAI_API_KEY) {
   process.exit(1)
 }
 
-const creator = new PodcastCreator({
-  apiKey: process.env.OPENAI_API_KEY
-})
+const creator = new PodcastCreator()
 
 const topStoryIds = await oraPromise(
   HackerNews.fetchTopStories(),
