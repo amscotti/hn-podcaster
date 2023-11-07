@@ -1,8 +1,18 @@
 # HackerNews Podcaster
 
-The HackerNews Podcaster is a JavaScript application that utilizes the power of OpenAI's language model to transform the top stories from Hacker News into a comprehensive podcast script!
+<p align="center">
+    <img src="images/A_stout_wizard_in_a_study_speaking_into_mic.jpg" alt="A stout wizard speaking into mic - Leonardo AI" width="600">
+</p>
+
+
+The HackerNews Podcaster is a JavaScript application that utilizes the power of OpenAI's language model to transform the top stories from Hacker News into a comprehensive podcast script! (and now with audio!)
 
 [![asciicast](https://asciinema.org/a/AiBAoZNW9qny7diWAUR45UElp.svg)](https://asciinema.org/a/AiBAoZNW9qny7diWAUR45UElp)
+
+## Example Output
+
+- [Podcast created on Nov 7, 2031 Audio](example/2023-11-07_podcast.mp3)
+- [Podcast created on Nov 7, 2031 Transcription](example/2023-11-07_transcription.txt)
 
 ## Overview
 
