@@ -15,7 +15,10 @@ Here's the flow of the application:
 3. Generating a podcast script from these summaries using GPT-4.
 4. Displaying the script on the console.
 
-With this project, you can quickly and automatically generate podcasts based on the latest technology news and trends.
+With this project, you can quickly and automatically generate podcasts based on the latest technology news and trends. The generated podcast is output as an MP3 file.
+
+## Additional Requirements
+This project requires `ffmpeg` to be installed on your local machine to process and generate the final MP3 audio file. Please ensure that `ffmpeg` is installed and accessible from your command line.
 
 ## Pre-requisites
 Make sure to have `node` and `npm` installed on your machine.

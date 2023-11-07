@@ -11,8 +11,10 @@
   "dependencies": {
     "cheerio": "^1.0.0-rc.12",
     "dotenv": "^16.3.0",
+    "fluent-ffmpeg": "^2.1.2",
     "html-to-text": "^9.0.5",
     "langchain": "^0.0.144",
+    "openai": "^4.16.1",
     "ora": "^6.3.1",
     "standard": "^17.1.0"
   }

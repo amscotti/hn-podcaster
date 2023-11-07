@@ -46,7 +46,7 @@ export default class PodcastCreator {
     })
 
     const gpt4 = new OpenAI({
-      modelName: 'gpt-4',
+      modelName: 'gpt-4-1106-preview',
       temperature: 1
     })
 
