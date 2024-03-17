@@ -11,8 +11,8 @@ The HackerNews Podcaster is a JavaScript application that utilizes the power of 
 
 ## Example Output
 
-- [Podcast created on Nov 7, 2031 Audio](example/2023-11-07_podcast.mp3)
-- [Podcast created on Nov 7, 2031 Transcription](example/2023-11-07_transcription.txt)
+- [Podcast created on Nov 7, 2023 Audio](example/2023-11-07_podcast.mp3)
+- [Podcast created on Nov 7, 2023 Transcription](example/2023-11-07_transcription.txt)
 
 ## Overview
 
