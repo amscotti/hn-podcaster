@@ -9,8 +9,9 @@ export default class PodcastRecorder {
   }
 
   async createRecording (podcastText, filePath) {
-    const textChunks = podcastText.split('\n').filter(chunk => chunk.trim() !== '')
-    // The directory and outputFilename are now passed directly to the method, so no need to compute them here.
+    const textChunks = podcastText
+      .split('\n')
+      .filter((chunk) => chunk.trim() !== '')
 
     for (let i = 0; i < textChunks.length; i++) {
       const chunk = textChunks[i]
@@ -26,7 +27,6 @@ export default class PodcastRecorder {
       await fs.promises.writeFile(partFilePath, buffer)
     }
 
-    // After all parts are written, concatenate them into a single MP3 file
     const directory = path.dirname(filePath)
     await this.concatenateMP3Files(directory, filePath)
   }
@@ -43,15 +43,20 @@ export default class PodcastRecorder {
         // Filter and sort MP3 files
         // Filter only the partial MP3 files that match the pattern 'outputFilename-<index>.mp3'
         const mp3Files = files
-          .filter(file => file.match(/-\d+\.mp3$/))
-          .map(file => path.join(directory, file))
-          .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+          .filter((file) => file.match(/-\d+\.mp3$/))
+          .map((file) => path.join(directory, file))
+          .sort((a, b) =>
+            a.localeCompare(b, undefined, {
+              numeric: true,
+              sensitivity: 'base'
+            })
+          )
 
         // Create a new FFmpeg command
         const command = ffmpeg()
 
         // Add each MP3 file as an input
-        mp3Files.forEach(file => command.input(file))
+        mp3Files.forEach((file) => command.input(file))
 
         // Use the concat filter to concatenate the files
         command

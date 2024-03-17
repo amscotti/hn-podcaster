@@ -2,20 +2,23 @@
   "name": "hacker-news-summary",
   "type": "module",
   "version": "1.0.0",
-  "description": "A Node.js application that gathers the top 5 postings from Hacker News and summarizes them using ChatGPT.",
+  "description": "A Node.js application that gathers the top 5 postings from Hacker News and summarizes them using GPT.",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "lint": "standard --fix"
   },
   "dependencies": {
+    "@langchain/community": "^0.0.40",
+    "@langchain/openai": "^0.0.21",
     "cheerio": "^1.0.0-rc.12",
-    "dotenv": "^16.3.0",
+    "dotenv": "^16.4.5",
     "fluent-ffmpeg": "^2.1.2",
     "html-to-text": "^9.0.5",
-    "langchain": "^0.0.144",
-    "openai": "^4.16.1",
-    "ora": "^6.3.1",
+    "langchain": "^0.1.28",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
     "standard": "^17.1.0"
   }
 }
