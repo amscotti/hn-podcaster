@@ -1,9 +1,10 @@
 import { OpenAI } from '@langchain/openai'
-import { loadSummarizationChain, LLMChain } from 'langchain/chains'
+import { loadSummarizationChain } from 'langchain/chains'
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter'
 import { PromptTemplate } from '@langchain/core/prompts'
-import { CheerioWebBaseLoader } from 'langchain/document_loaders/web/cheerio'
+import { CheerioWebBaseLoader } from '@langchain/community/document_loaders/web/cheerio'
 import { HtmlToTextTransformer } from '@langchain/community/document_transformers/html_to_text'
+import { StringOutputParser } from '@langchain/core/output_parsers'
 
 const SUMMARIES_COMBINATION_PROMPT = new PromptTemplate({
   inputVariables: ['text'],
@@ -40,34 +41,28 @@ const GENERATE_PODCAST_PROMPT = new PromptTemplate({
 
 export default class PodcastCreator {
   constructor () {
-    const gpt35Turbo = new OpenAI({
-      modelName: 'gpt-3.5-turbo',
-      temperature: 0.7
-    })
-
-    const gpt4 = new OpenAI({
-      modelName: 'gpt-4-turbo-preview',
+    const model = new OpenAI({
+      modelName: 'gpt-4o',
       temperature: 1
     })
 
     // Used for creating summaries
     const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: 5000,
-      chunkOverlap: 1000
+      chunkSize: 10000,
+      chunkOverlap: 2000
     })
     const htmlToText = new HtmlToTextTransformer()
     this.sequence = htmlToText.pipe(splitter)
 
-    this.summarizer = loadSummarizationChain(gpt35Turbo, {
+    this.summarizer = loadSummarizationChain(model, {
       type: 'map_reduce',
       combinePrompt: SUMMARIES_COMBINATION_PROMPT
     })
 
+    const outputParser = new StringOutputParser()
+
     // Used for creating the podcast
-    this.podcastGenerator = new LLMChain({
-      llm: gpt4,
-      prompt: GENERATE_PODCAST_PROMPT
-    })
+    this.podcastGeneratorChain = GENERATE_PODCAST_PROMPT.pipe(model).pipe(outputParser)
   }
 
   async getWebPageText (url) {
@@ -81,16 +76,16 @@ export default class PodcastCreator {
 
   async generateSummary (text) {
     const docs = await this.sequence.invoke(text)
-    const res = await this.summarizer.call({ input_documents: docs })
+    const res = await this.summarizer.invoke({ input_documents: docs })
 
     return res.text
   }
 
   async generatePodcast (summaries) {
-    const res = await this.podcastGenerator.call({
+    const res = await this.podcastGeneratorChain.invoke({
       text: summaries.join('\n')
     })
 
-    return res.text
+    return res
   }
 }
