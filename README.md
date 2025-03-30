@@ -1,40 +1,106 @@
 # HackerNews Podcaster
 
 <p align="center">
-    <img src="images/A_stout_wizard_in_a_study_speaking_into_mic.jpg" alt="A stout wizard speaking into mic - Leonardo AI" width="600">
+    <img src="images/A_stout_wizard_in_a_study_speaking_into_mic.jpg" alt="A stout wizard speaking into a microphone" width="600">
 </p>
 
 
-The HackerNews Podcaster is a JavaScript application that utilizes the power of OpenAI's language model to transform the top stories from Hacker News into a comprehensive podcast script! (and now with audio!)
+HackerNews Podcaster is a user-friendly JavaScript application that leverages OpenAI’s powerful language models to convert the top stories from Hacker News into engaging, audio-ready podcasts.
 
-[![asciicast](https://asciinema.org/a/AiBAoZNW9qny7diWAUR45UElp.svg)](https://asciinema.org/a/AiBAoZNW9qny7diWAUR45UElp)
+⸻
 
-## Example Output
+📖 About This Project
 
-- [Podcast created on Nov 7, 2023 Audio](example/2023-11-07_podcast.mp3)
-- [Podcast created on Nov 7, 2023 Transcription](example/2023-11-07_transcription.txt)
+Inspired by Hacker News Recap by Wondercraft.ai, this project explores the capabilities of OpenAI’s advanced language processing and text-to-speech models. HackerNews Podcaster fetches the latest stories from Hacker News, summarizes them succinctly, and then crafts these summaries into conversational scripts, ultimately generating polished podcast audio automatically.
 
-## Overview
+Whether you’re keeping up with technology trends or experimenting with AI-driven content, this tool streamlines podcast creation effortlessly.
 
-As a listener of the [Hacker News Recap](https://hackernewsrecap.buzzsprout.com/) by [Wondercraft.ai](https://www.wondercraft.ai), I became curious about the process of reproducing it using ChatGPT. By leveraging the advanced language processing capabilities of both OpenAI's GPT-3 and GPT-4 models, I created the HackerNews Podcaster. This application fetches the top stories from Hacker News, condenses them into concise summaries, and then assembles these summaries into a conversational and engaging podcast script.
+⸻
 
-Here's the flow of the application:
+🎧 Example Output
+- 📅 March 25, 2025 - 🎤 [Podcast Audio](example/2025-03-25_podcast.mp3) 📝 [Transcript](example/2025-03-25_podcast.txt)
+- 📅 November 7, 2023 (Older Version) - 🎤 [Podcast Audio](example/2023-11-07_podcast.mp3) 📝 [Transcript](example/2023-11-07_podcast.txt)
 
-1. Fetching the top stories from Hacker News.
-2. Utilizing GPT-3 to summarize each of the top stories.
-3. Generating a podcast script from these summaries using GPT-4.
-4. Displaying the script on the console.
+⸻
 
-With this project, you can quickly and automatically generate podcasts based on the latest technology news and trends. The generated podcast is output as an MP3 file.
+🌟 Features
+- Automatically fetches and processes top Hacker News stories.
+- Uses OpenAI O3-mini to generate concise, clear story summaries.
+- Creates conversational podcast scripts with GPT-4.5-preview.
+- Iteratively refines the podcast scripts for maximum clarity and engagement.
+- Generates professional-quality MP3 audio with OpenAI’s TTS API.
+- Saves transcripts and audio files neatly organized for easy access.
 
-## Additional Requirements
-This project requires `ffmpeg` to be installed on your local machine to process and generate the final MP3 audio file. Please ensure that `ffmpeg` is installed and accessible from your command line.
+⸻
 
-## Pre-requisites
-Make sure to have `node` and `npm` installed on your machine.
+🚀 Quick Setup
 
-## Environment Configuration 
-This project uses an environment variable for the OpenAI API Key. Make sure you have the `OPENAI_API_KEY` environment variable set in a `.env` file at the root of your project or in your system environment variables.
+Follow these simple steps to get the application up and running:
 
-## Note
-Ensure that the OpenAI key provided has required permissions and enough quota for making summarization and text generation requests to OpenAI API.
+🔧 Step 1: Clone the repository
+
+```bash
+git clone https://github.com/amscotti/hn-podcaster.git
+cd hn-podcaster
+```
+
+📦 Step 2: Install Dependencies
+
+```bash
+bun install
+```
+
+🔑 Step 3: Configure API Key
+
+Set your OpenAI API key in your environment:
+
+```bash
+export OPENAI_API_KEY=your_api_key_here
+```
+
+Or create a .env file at the project root:
+
+```
+OPENAI_API_KEY=your_api_key_here
+```
+
+🎙️ Step 4: Generate Podcast
+
+Run the application to create your podcast:
+
+```bash
+bun run app.js
+```
+
+Generated audio files and transcripts are stored in the output/ directory.
+
+⸻
+
+📂 Project Structure
+- src/: Core modules (HackerNews.js, PodcastCreator.js, PodcastRecorder.js)
+- app.js: Main application entry point
+- output/: Generated podcasts and transcripts
+- example/: Example outputs for quick reference
+
+⸻
+
+🛠️ Technical Overview
+
+This project utilizes cutting-edge technologies, including:
+- JavaScript with Bun runtime for performance and efficiency
+- OpenAI API (GPT-4.5-preview, O3-mini, and Text-to-Speech)
+- Biome.js for standardized code formatting and linting
+
+Helpful Development Commands
+- Linting: `bun lint`
+- Formatting: `bun format`
+
+⸻
+
+📌 Requirements
+- [Bun](https://bun.sh/) runtime
+- OpenAI API key with access to GPT-4.5-preview and TTS models
+
+⸻
+
+Enjoy effortlessly generating engaging technology podcasts with HackerNews Podcaster!

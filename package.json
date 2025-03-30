@@ -1,24 +1,22 @@
 {
-  "name": "hacker-news-summary",
+  "name": "hacker-news-podcaster",
   "type": "module",
+  "license": "MIT",
   "version": "1.0.0",
-  "description": "A Node.js application that gathers the top 5 postings from Hacker News and summarizes them using GPT.",
+  "description": "A JavaScript application that transforms the top stories from Hacker News into a podcast with audio using OpenAI models.",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js",
-    "lint": "standard --fix"
+    "start": "bun run app.js",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check --write ."
   },
   "dependencies": {
-    "@langchain/community": "^0.2.1",
-    "@langchain/openai": "^0.0.33",
-    "cheerio": "^1.0.0-rc.12",
-    "dotenv": "^16.4.5",
-    "fluent-ffmpeg": "^2.1.3",
     "html-to-text": "^9.0.5",
-    "langchain": "^0.2.1",
+    "openai": "^4.90.0",
     "ora": "^8.0.1"
   },
   "devDependencies": {
-    "standard": "^17.1.0"
+    "@biomejs/biome": "^1.5.3"
   }
 }
