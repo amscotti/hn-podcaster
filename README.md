@@ -4,8 +4,7 @@
     <img src="images/A_stout_wizard_in_a_study_speaking_into_mic.jpg" alt="A stout wizard speaking into a microphone" width="600">
 </p>
 
-
-HackerNews Podcaster is a user-friendly JavaScript application that leverages OpenAI’s powerful language models to convert the top stories from Hacker News into engaging, audio-ready podcasts.
+HackerNews Podcaster is a user-friendly JavaScript application that leverages OpenAI’s powerful GPT-4.1 language models (nano and flagship) to convert the top stories from Hacker News into engaging, audio-ready podcasts.
 
 ⸻
 
@@ -18,6 +17,7 @@ Whether you’re keeping up with technology trends or experimenting with AI-driv
 ⸻
 
 🎧 Example Output
+- 📅 April 14, 2025 - 🎤 [Podcast Audio](example/2025-04-14_podcast.mp3) 📝 [Transcript](example/2025-04-14_podcast.txt)
 - 📅 March 25, 2025 - 🎤 [Podcast Audio](example/2025-03-25_podcast.mp3) 📝 [Transcript](example/2025-03-25_podcast.txt)
 - 📅 November 7, 2023 (Older Version) - 🎤 [Podcast Audio](example/2023-11-07_podcast.mp3) 📝 [Transcript](example/2023-11-07_podcast.txt)
 
@@ -25,10 +25,10 @@ Whether you’re keeping up with technology trends or experimenting with AI-driv
 
 🌟 Features
 - Automatically fetches and processes top Hacker News stories.
-- Uses OpenAI O3-mini to generate concise, clear story summaries.
-- Creates conversational podcast scripts with GPT-4.5-preview.
+- Uses OpenAI GPT-4.1-nano to generate concise, clear story summaries and suggestions.
+- Creates conversational podcast scripts with GPT-4.1 (flagship) for high-quality, long-form content.
 - Iteratively refines the podcast scripts for maximum clarity and engagement.
-- Generates professional-quality MP3 audio with OpenAI’s TTS API.
+- Generates professional-quality MP3 audio with OpenAI’s latest TTS models.
 - Saves transcripts and audio files neatly organized for easy access.
 
 ⸻
@@ -88,7 +88,7 @@ Generated audio files and transcripts are stored in the output/ directory.
 
 This project utilizes cutting-edge technologies, including:
 - JavaScript with Bun runtime for performance and efficiency
-- OpenAI API (GPT-4.5-preview, O3-mini, and Text-to-Speech)
+- OpenAI API (GPT-4.1 flagship, GPT-4.1-nano, and Text-to-Speech)
 - Biome.js for standardized code formatting and linting
 
 Helpful Development Commands
@@ -99,7 +99,7 @@ Helpful Development Commands
 
 📌 Requirements
 - [Bun](https://bun.sh/) runtime
-- OpenAI API key with access to GPT-4.5-preview and TTS models
+- OpenAI API key with access to GPT-4.1 (flagship, nano) and TTS models
 
 ⸻
 

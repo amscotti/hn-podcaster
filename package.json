@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "html-to-text": "^9.0.5",
-    "openai": "^4.90.0",
+    "openai": "^4.94.0",
     "ora": "^8.0.1"
   },
   "devDependencies": {

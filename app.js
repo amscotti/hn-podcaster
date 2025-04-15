@@ -9,7 +9,7 @@ import PodcastRecorder from "./src/PodcastRecorder.js";
 import { fileURLToPath } from "node:url";
 
 const STORY = "story";
-const COUNT = 15;
+const COUNT = 10;
 
 function formatDate(unixTimestamp) {
   const date = new Date(unixTimestamp * 1000);
