@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "permissions": {
+    "default": {
+      "net": true,
+      "write": ["./output"],
+      "read": ["./output"],
+      "env": [
+        "GENERAL_AI_API_KEY",
+        "GENERAL_AI_BASE_URL",
+        "GENERAL_AI_MODEL_SUMMARY",
+        "GENERAL_AI_MODEL_MAIN",
+        "OPENAI_ORG_ID",
+        "OPENAI_PROJECT_ID",
+        "OPENAI_WEBHOOK_SECRET",
+        "OPENAI_LOG",
+        "OPENAI_API_KEY",
+        "OPENAI_TTS_BASE_URL",
+        "OPENAI_MODEL_TTS"
+      ]
+    }
+  },
+  "tasks": {
+    "start": "deno run --env-file -P app.ts",
+    "check": "deno check app.ts && deno lint && deno fmt --check",
+    "test": "deno test"
+  },
+  "imports": {
+    "@jonasschiano/kia": "jsr:@jonasschiano/kia@^0.0.120",
+    "@polar/terminal-utils": "jsr:@polar/terminal-utils@^0.1.2",
+    "@std/assert": "jsr:@std/assert@^1.0.15",
+    "@std/testing/mock": "jsr:@std/testing@^1.0.16",
+    "@openai/openai": "jsr:@openai/openai@^5.23.2",
+    "@zod/zod": "jsr:@zod/zod@^4.1.12",
+    "@logtape/logtape": "jsr:@logtape/logtape@^1.1.1",
+    "@logtape/pretty": "jsr:@logtape/pretty@^1.1.1",
+    "html-to-text": "npm:html-to-text@^9.0.5"
+  }
+}
