@@ -4,149 +4,134 @@
     <img src="images/A_stout_wizard_in_a_study_speaking_into_mic.jpg" alt="A stout wizard speaking into a microphone" width="600">
 </p>
 
-HackerNews Podcaster is a user-friendly JavaScript application that leverages AI
-language models to convert the top stories from Hacker News into engaging,
-audio-ready podcasts. Compatible with OpenAI and xAI APIs.
+A TypeScript application that converts top Hacker News stories into podcast
+audio using AI. Works with any OpenAI-compatible API.
 
-⸻
+## About
 
-📖 About This Project
+Inspired by Hacker News Recap by Wondercraft.ai, this tool fetches top stories
+from Hacker News, summarizes them using AI language models, generates a
+conversational podcast script, and converts it to audio.
 
-Inspired by Hacker News Recap by Wondercraft.ai, this project explores the
-capabilities of advanced AI language processing and text-to-speech models.
-HackerNews Podcaster fetches the latest stories from Hacker News, summarizes
-them succinctly, and then crafts these summaries into conversational scripts,
-ultimately generating polished podcast audio automatically.
+The project works with any OpenAI-compatible API provider. You can use OpenAI's
+models, xAI's Grok models, or any other compatible service. Simply configure the
+base URL and model names - no code changes needed.
 
-Compatible with both OpenAI and xAI APIs - configure the base URL to switch
-between providers.
+## Example Output
 
-Whether you’re keeping up with technology trends or experimenting with AI-driven
-content, this tool streamlines podcast creation effortlessly.
+- [April 14, 2025 Podcast](example/2025-04-14_podcast.mp3)
+  ([Transcript](example/2025-04-14_podcast.txt))
+- [March 25, 2025 Podcast](example/2025-03-25_podcast.mp3)
+  ([Transcript](example/2025-03-25_podcast.txt))
+- [November 7, 2023 Podcast](example/2023-11-07_podcast.mp3)
+  ([Transcript](example/2023-11-07_podcast.txt))
 
-⸻
+## Features
 
-🎧 Example Output
+- Fetches top stories from Hacker News
+- Generates summaries and talking points using AI
+- Creates conversational podcast scripts
+- Iteratively refines scripts for clarity
+- Converts scripts to MP3 audio
+- Saves transcripts and audio to the output directory
 
-- 📅 April 14, 2025 - 🎤 [Podcast Audio](example/2025-04-14_podcast.mp3) 📝
-  [Transcript](example/2025-04-14_podcast.txt)
-- 📅 March 25, 2025 - 🎤 [Podcast Audio](example/2025-03-25_podcast.mp3) 📝
-  [Transcript](example/2025-03-25_podcast.txt)
-- 📅 November 7, 2023 (Older Version) - 🎤
-  [Podcast Audio](example/2023-11-07_podcast.mp3) 📝
-  [Transcript](example/2023-11-07_podcast.txt)
+## Setup
 
-⸻
-
-🌟 Features
-
-- Automatically fetches and processes top Hacker News stories.
-- Uses AI models to generate concise, clear story summaries and suggestions.
-- Creates conversational podcast scripts for high-quality, long-form content.
-- Iteratively refines the podcast scripts for maximum clarity and engagement.
-- Generates professional-quality MP3 audio with text-to-speech models.
-- Saves transcripts and audio files neatly organized for easy access.
-
-⸻
-
-🚀 Quick Setup
-
-Follow these simple steps to get the application up and running:
-
-🔧 Step 1: Clone the repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/amscotti/hn-podcaster.git
 cd hn-podcaster
 ```
 
-📦 Step 2: Install Dependencies
+### 2. Install Deno
+
+Install [Deno](https://deno.land/) if you haven't already:
 
 ```bash
-bun install
+curl -fsSL https://deno.land/x/install/install.sh | sh
 ```
 
-🔑 Step 3: Configure API Keys and Models
-
-Set your API keys for general AI operations and text-to-speech:
+Or use [mise](https://mise.jdx.dev/) which will automatically use the version
+specified in `mise.toml`:
 
 ```bash
-export GENERAL_AI_API_KEY=your_general_ai_key    # For xAI or other providers (required)
-export GENERAL_AI_BASE_URL=https://api.x.ai/v1
-export GENERAL_AI_MODEL_SUMMARY=grok-beta
-export GENERAL_AI_MODEL_MAIN=grok-beta
-
-export OPENAI_API_KEY=your_openai_key            # For TTS (required)
-export OPENAI_TTS_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL_TTS=gpt-4o-mini-tts
+mise install
 ```
 
-Or create a .env file at the project root:
+### 3. Configure API Keys
 
-```
-GENERAL_AI_API_KEY=your_general_ai_key
+Create a `.env` file in the project root. The example below uses xAI's Grok
+models for text generation and OpenAI for text-to-speech:
+
+```env
+# General AI (for summaries and script generation)
+GENERAL_AI_API_KEY=your_api_key
 GENERAL_AI_BASE_URL=https://api.x.ai/v1
-GENERAL_AI_MODEL_SUMMARY=grok-beta
-GENERAL_AI_MODEL_MAIN=grok-beta
+GENERAL_AI_MODEL_SUMMARY=grok-4-fast-non-reasoning
+GENERAL_AI_MODEL_MAIN=grok-4-fast
 
+# Text-to-Speech
 OPENAI_API_KEY=your_openai_key
 OPENAI_TTS_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL_TTS=gpt-4o-mini-tts
 ```
 
-🎙️ Step 4: Generate Podcast
+**Using other providers:** Any OpenAI-compatible API works. Just set the
+`GENERAL_AI_BASE_URL` to your provider's endpoint and use their model names. For
+example, to use OpenAI for everything, set
+`GENERAL_AI_BASE_URL=https://api.openai.com/v1` and use model names like
+`gpt-4o` or `gpt-4o-mini`.
 
-Run the application to create your podcast:
+### 4. Run
+
+Generate a podcast:
 
 ```bash
-bun run app.js
+deno task start
 ```
 
-Generated audio files and transcripts are stored in the output/ directory.
+Output files are saved to the `output/` directory.
 
-⸻
+## Development
 
-📂 Project Structure
+Type checking, linting, and formatting:
 
-- `src/`: Core modules (HackerNews.ts, PodcastCreator.ts, PodcastRecorder.ts,
-  config.ts)
-- `src/services/`: Service layer with interfaces and implementations
-- `app.ts`: Main application entry point
-- `output/`: Generated podcasts and transcripts
-- `example/`: Example outputs for quick reference
+```bash
+deno task check
+```
 
-⸻
+Run tests:
 
-⸻
+```bash
+deno task test
+```
 
-🛠️ Technical Overview
+## Project Structure
 
-This project utilizes cutting-edge technologies, including:
+- `src/` - Core application code
+  - `services/` - Service layer with interfaces and implementations
+  - `workflows/` - High-level workflow orchestration
+  - `shared/` - Shared utilities (errors, logging)
+- `app.ts` - Main entry point
+- `output/` - Generated podcasts and transcripts
+- `example/` - Example outputs
 
-- **TypeScript** with Bun runtime for performance and type safety
-- OpenAI-compatible APIs (OpenAI and xAI) for language models and text-to-speech
-- Service-oriented architecture with dependency injection for easy provider
-  swapping
-- Centralized configuration system (`src/config.ts`) for environment management
-- Biome.js for standardized code formatting and linting
+## Architecture
 
-The service architecture uses interfaces to define contracts, making it easy to
-add support for additional AI providers in the future. Services are injected
-into components via constructor dependency injection.
+The project uses a service-based architecture with dependency injection. AI
+providers are abstracted behind interfaces, so you can use any OpenAI-compatible
+API (OpenAI, xAI, locally hosted models, etc.) by just changing the
+configuration - no code changes required.
 
-Helpful Development Commands
+Core components:
 
-- Linting: `bun lint`
-- Formatting: `bun format`
+- **HackerNews.ts** - Fetches stories from the Hacker News API
+- **PodcastCreator.ts** - Orchestrates summarization and script generation
+- **PodcastRecorder.ts** - Converts scripts to audio
+- **workflows/** - Coordinates the full pipeline with error handling
 
-⸻
+## Requirements
 
-📌 Requirements
-
-- [Bun](https://bun.sh/) runtime
-- API key for OpenAI or xAI with access to compatible language and TTS models
-
-⸻
-
-Enjoy effortlessly generating engaging technology podcasts with HackerNews
-Podcaster!
+- Deno 2.5+
+- API key for any OpenAI-compatible provider (OpenAI, xAI, etc.)
