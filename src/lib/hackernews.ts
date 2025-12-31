@@ -7,7 +7,7 @@ const ITEM_URL_BASE = "https://hacker-news.firebaseio.com/v0/item";
 const TopStoriesSchema = z.array(z.number().int().positive());
 
 // Schema for individual story object
-const StorySchema = z.object({
+export const StorySchema = z.object({
   id: z.number(),
   title: z.string(),
   url: z.string().optional(),

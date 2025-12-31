@@ -5,20 +5,26 @@
   "permissions": {
     "default": {
       "net": true,
-      "write": ["./output"],
-      "read": ["./output"],
+      "write": true,
+      "read": true,
       "env": [
-        "GENERAL_AI_API_KEY",
-        "GENERAL_AI_BASE_URL",
-        "GENERAL_AI_MODEL_SUMMARY",
-        "GENERAL_AI_MODEL_MAIN",
+        "AI_PROVIDER",
+        "XAI_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
         "OPENAI_ORG_ID",
         "OPENAI_PROJECT_ID",
         "OPENAI_WEBHOOK_SECRET",
         "OPENAI_LOG",
-        "OPENAI_API_KEY",
-        "OPENAI_TTS_BASE_URL",
-        "OPENAI_MODEL_TTS"
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_GENERATIVE_AI_API_KEY",
+        "MASTRA_AUTO_REFRESH_PROVIDERS",
+        "MASTRA_DEV",
+        "NODE_ENV",
+        "STORY_COUNT",
+        "IMPROVEMENT_ITERATIONS",
+        "OUTPUT_DIR",
+        "SKIP_AUDIO"
       ]
     }
   },
@@ -28,14 +34,14 @@
     "test": "deno test"
   },
   "imports": {
-    "@jonasschiano/kia": "jsr:@jonasschiano/kia@^0.0.120",
-    "@polar/terminal-utils": "jsr:@polar/terminal-utils@^0.1.2",
+    "@mastra/voice-openai": "npm:@mastra/voice-openai@^0.11.12",
     "@std/assert": "jsr:@std/assert@^1.0.15",
     "@std/testing/mock": "jsr:@std/testing@^1.0.16",
-    "@openai/openai": "jsr:@openai/openai@^5.23.2",
-    "@zod/zod": "jsr:@zod/zod@^4.1.12",
+    "@zod/zod": "npm:zod@^3.25.76",
     "@logtape/logtape": "jsr:@logtape/logtape@^1.1.1",
     "@logtape/pretty": "jsr:@logtape/pretty@^1.1.1",
-    "html-to-text": "npm:html-to-text@^9.0.5"
+    "html-to-text": "npm:html-to-text@^9.0.5",
+    "unpdf": "npm:unpdf@^0.12.0",
+    "@mastra/core": "npm:@mastra/core@^0.24.9"
   }
 }

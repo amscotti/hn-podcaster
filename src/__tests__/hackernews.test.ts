@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { fetchStory, fetchTopStories, type Story } from "../HackerNews.ts";
+import { fetchStory, fetchTopStories, type Story } from "../lib/hackernews.ts";
 
 Deno.test("fetchTopStories - valid response", async () => {
   const originalFetch = globalThis.fetch;

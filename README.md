@@ -5,17 +5,14 @@
 </p>
 
 A TypeScript application that converts top Hacker News stories into podcast
-audio using AI. Works with any OpenAI-compatible API.
+audio using AI. Built with [Mastra](https://mastra.ai) for workflow
+orchestration and supports multiple AI providers.
 
 ## About
 
 Inspired by Hacker News Recap by Wondercraft.ai, this tool fetches top stories
 from Hacker News, summarizes them using AI language models, generates a
 conversational podcast script, and converts it to audio.
-
-The project works with any OpenAI-compatible API provider. You can use OpenAI's
-models, xAI's Grok models, or any other compatible service. Simply configure the
-base URL and model names - no code changes needed.
 
 ## Example Output
 
@@ -29,10 +26,11 @@ base URL and model names - no code changes needed.
 ## Features
 
 - Fetches top stories from Hacker News
-- Generates summaries and talking points using AI
+- Downloads and extracts text from webpages and PDFs
+- Generates summaries and talking points using AI agents
 - Creates conversational podcast scripts
-- Iteratively refines scripts for clarity
-- Converts scripts to MP3 audio
+- Iteratively refines scripts (configurable improvement loops)
+- Converts scripts to MP3 audio using OpenAI TTS
 - Saves transcripts and audio to the output directory
 
 ## Setup
@@ -61,27 +59,47 @@ mise install
 
 ### 3. Configure API Keys
 
-Create a `.env` file in the project root. The example below uses xAI's Grok
-models for text generation and OpenAI for text-to-speech:
+Create a `.env` file in the project root:
 
 ```env
-# General AI (for summaries and script generation)
-GENERAL_AI_API_KEY=your_api_key
-GENERAL_AI_BASE_URL=https://api.x.ai/v1
-GENERAL_AI_MODEL_SUMMARY=grok-4-fast-non-reasoning
-GENERAL_AI_MODEL_MAIN=grok-4-fast
+# AI Provider (optional - auto-detects from available API keys)
+# Options: xai, openai, anthropic, google
+# AI_PROVIDER=xai
 
-# Text-to-Speech
-OPENAI_API_KEY=your_openai_key
-OPENAI_TTS_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL_TTS=gpt-4o-mini-tts
+# API Keys (at least one AI provider required, OpenAI required for voice)
+XAI_API_KEY=your_xai_key_here
+OPENAI_API_KEY=your_openai_key_here
+# ANTHROPIC_API_KEY=your_anthropic_key_here
+# GOOGLE_GENERATIVE_AI_API_KEY=your_google_key_here
 ```
 
-**Using other providers:** Any OpenAI-compatible API works. Just set the
-`GENERAL_AI_BASE_URL` to your provider's endpoint and use their model names. For
-example, to use OpenAI for everything, set
-`GENERAL_AI_BASE_URL=https://api.openai.com/v1` and use model names like
-`gpt-4o` or `gpt-4o-mini`.
+**Supported providers and their models:**
+
+| Provider  | Summary Model               | Main Model             |
+| --------- | --------------------------- | ---------------------- |
+| xai       | grok-4-1-fast-non-reasoning | grok-4-1-fast          |
+| openai    | gpt-5-mini                  | gpt-5.2                |
+| anthropic | claude-haiku-4-5            | claude-sonnet-4-5      |
+| google    | gemini-3-pro-preview        | gemini-3-flash-preview |
+
+OpenAI is always required for text-to-speech (unless `SKIP_AUDIO=true`).
+
+### Optional Settings
+
+```env
+# Number of Hacker News stories to include (default: 10)
+STORY_COUNT=10
+
+# Number of script improvement iterations (default: 5)
+IMPROVEMENT_ITERATIONS=5
+
+# Output directory for generated files (default: ./output)
+OUTPUT_DIR=./output
+
+# Skip audio generation, transcript only (default: false)
+# Useful for faster iteration on script quality
+SKIP_AUDIO=true
+```
 
 ### 4. Run
 
@@ -109,29 +127,57 @@ deno task test
 
 ## Project Structure
 
-- `src/` - Core application code
-  - `services/` - Service layer with interfaces and implementations
-  - `workflows/` - High-level workflow orchestration
-  - `shared/` - Shared utilities (errors, logging)
-- `app.ts` - Main entry point
-- `output/` - Generated podcasts and transcripts
-- `example/` - Example outputs
+```
+src/
+├── mastra/                    # Mastra components
+│   ├── agents/               # AI agent definitions
+│   │   ├── summary.ts        # Story summarization agent
+│   │   ├── podcast.ts        # Script generation agent
+│   │   ├── suggestion.ts     # Script editor agent
+│   │   ├── improvement.ts    # Script improver agent
+│   │   └── index.ts          # Agent exports
+│   ├── steps/                # Workflow step definitions
+│   │   ├── fetch-stories.ts  # Fetch HN story IDs
+│   │   ├── fetch-metadata.ts # Fetch story details
+│   │   ├── download-content.ts # Download article text (HTML + PDF)
+│   │   └── index.ts          # Step exports
+│   ├── workflows/            # Workflow definitions
+│   │   └── podcast-generation.ts
+│   └── index.ts              # Central Mastra entry point
+├── lib/                      # Support code
+│   ├── config.ts             # Configuration with Zod validation
+│   ├── providers.ts          # AI provider configuration
+│   ├── hackernews.ts         # HN API client
+│   └── logger.ts             # LogTape configuration
+└── __tests__/                # Test files
+app.ts                        # Entry point
+output/                       # Generated podcasts and transcripts
+```
 
 ## Architecture
 
-The project uses a service-based architecture with dependency injection. AI
-providers are abstracted behind interfaces, so you can use any OpenAI-compatible
-API (OpenAI, xAI, locally hosted models, etc.) by just changing the
-configuration - no code changes required.
+The project uses [Mastra](https://mastra.ai), a TypeScript AI framework, for
+workflow orchestration. The workflow is composed of sequential steps:
 
-Core components:
+1. **Fetch Stories** - Get top story IDs from Hacker News
+2. **Fetch Metadata** - Get story details and filter for valid URLs
+3. **Download Content** - Fetch webpage HTML or PDF and extract text
+4. **Generate Summaries** - AI agents create summaries and talking points
+5. **Generate Script** - Create initial podcast script
+6. **Improve Script** - Iterative refinement (suggest → apply)
+7. **Generate Audio** - Convert script to MP3 via OpenAI TTS
 
-- **HackerNews.ts** - Fetches stories from the Hacker News API
-- **PodcastCreator.ts** - Orchestrates summarization and script generation
-- **PodcastRecorder.ts** - Converts scripts to audio
-- **workflows/** - Coordinates the full pipeline with error handling
+### AI Agents
+
+Four specialized agents handle different aspects:
+
+- **Summary Agent** - Creates article summaries and talking points
+- **Podcast Agent** - Generates the podcast script
+- **Suggestion Agent** - Proposes script improvements
+- **Improvement Agent** - Applies suggested improvements
 
 ## Requirements
 
 - Deno 2.5+
-- API key for any OpenAI-compatible provider (OpenAI, xAI, etc.)
+- API key for at least one supported AI provider
+- OpenAI API key (required for text-to-speech, unless skipping audio)
