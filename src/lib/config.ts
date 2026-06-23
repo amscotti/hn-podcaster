@@ -1,5 +1,11 @@
 import { z } from "@zod/zod";
 
+// Voice provider definitions
+export const VOICE_PROVIDER_IDS = ["openai", "xai"] as const;
+export type VoiceProvider = (typeof VOICE_PROVIDER_IDS)[number];
+
+const VoiceProviderSchema = z.enum(VOICE_PROVIDER_IDS);
+
 // AI Provider definitions
 export const AI_PROVIDER_IDS = [
   "xai",
@@ -37,6 +43,13 @@ const ConfigSchema = z.object({
     .min(0)
     .default(5)
     .describe("Number of script improvement iterations"),
+  commentCount: z
+    .number()
+    .int()
+    .min(0)
+    .max(50)
+    .default(25)
+    .describe("Number of top HN comments to fetch per story (0 disables)"),
   outputDir: z
     .string()
     .min(1)
@@ -46,6 +59,21 @@ const ConfigSchema = z.object({
     .boolean()
     .default(false)
     .describe("Skip audio generation (transcript only)"),
+
+  // Voice / TTS settings
+  voiceProvider: VoiceProviderSchema
+    .default("xai")
+    .describe("TTS provider for audio generation"),
+  xaiVoiceId: z
+    .string()
+    .min(1)
+    .default("ara")
+    .describe("xAI voice id (eve, ara, rex, sal, leo, or custom)"),
+  xaiVoiceLanguage: z
+    .string()
+    .min(1)
+    .default("en")
+    .describe("BCP-47 language code for xAI TTS (e.g. en, or auto)"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -115,11 +143,33 @@ function loadConfig(): Config {
   // Check if audio generation is being skipped
   const skipAudio = Deno.env.get("SKIP_AUDIO")?.toLowerCase() === "true";
 
-  // OpenAI is required for voice/TTS (unless skipping audio)
-  if (!apiKeys.openai && !skipAudio) {
-    throw new Error(
-      "OPENAI_API_KEY is required for voice/TTS (or set SKIP_AUDIO=true)",
-    );
+  // Resolve voice provider (validates VOICE_PROVIDER if set; defaults to xai)
+  const voiceProvider = (() => {
+    const explicit = Deno.env.get("VOICE_PROVIDER");
+    if (explicit === undefined) return "xai" as const;
+    const result = VoiceProviderSchema.safeParse(explicit);
+    if (!result.success) {
+      throw new Error(
+        `Invalid VOICE_PROVIDER: "${explicit}". Must be one of: ${
+          VOICE_PROVIDER_IDS.join(", ")
+        }`,
+      );
+    }
+    return result.data;
+  })();
+
+  // A voice provider API key is required for TTS (unless skipping audio)
+  if (!skipAudio) {
+    if (voiceProvider === "openai" && !apiKeys.openai) {
+      throw new Error(
+        "OPENAI_API_KEY is required for voice/TTS (or set VOICE_PROVIDER=xai with XAI_API_KEY, or SKIP_AUDIO=true)",
+      );
+    }
+    if (voiceProvider === "xai" && !apiKeys.xai) {
+      throw new Error(
+        "XAI_API_KEY is required for xAI voice/TTS (or set SKIP_AUDIO=true)",
+      );
+    }
   }
 
   // Detect provider (validates AI_PROVIDER if set)
@@ -139,13 +189,17 @@ function loadConfig(): Config {
     apiKeys,
     storyCount: parseIntEnv("STORY_COUNT"),
     improvementIterations: parseIntEnv("IMPROVEMENT_ITERATIONS"),
+    commentCount: parseIntEnv("COMMENT_COUNT"),
     outputDir: Deno.env.get("OUTPUT_DIR"),
     skipAudio,
+    voiceProvider,
+    xaiVoiceId: Deno.env.get("XAI_VOICE_ID"),
+    xaiVoiceLanguage: Deno.env.get("XAI_VOICE_LANGUAGE"),
   };
 
   // Remove undefined values so Zod defaults apply
   const cleanConfig = Object.fromEntries(
-    Object.entries(rawConfig).filter(([_, v]) => v !== undefined),
+    Object.entries(rawConfig).filter(([, v]) => v !== undefined),
   );
 
   const result = ConfigSchema.safeParse(cleanConfig);

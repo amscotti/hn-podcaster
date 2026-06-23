@@ -9,19 +9,17 @@ import {
 } from "../steps/index.ts";
 import {
   improvementAgent,
-  NO_IMPROVEMENTS_MARKER,
   podcastAgent,
+  scriptSuggestionsSchema,
   suggestionAgent,
   summaryAgent,
 } from "../agents/index.ts";
 import { config } from "../../lib/config.ts";
 import { getAppLogger } from "../../lib/logger.ts";
-import { getVoiceConfig } from "../../lib/providers.ts";
-import { OpenAIVoice } from "@mastra/voice-openai";
-import type { OpenAIConfig } from "@mastra/voice-openai";
-
-// Extract OpenAIModel type from OpenAIConfig (not exported by library)
-type OpenAIModel = NonNullable<OpenAIConfig["name"]>;
+import {
+  createVoiceProvider,
+  getSpeechTagGuidance,
+} from "../../lib/providers.ts";
 
 const logger = getAppLogger("workflow");
 
@@ -50,12 +48,17 @@ const generateSummariesStep = createStep({
           return formatStoryContent(story, "Content could not be fetched");
         }
 
+        const communityContext = story.commentsText
+          ? `\n\n## Hacker News Community Discussion\nTop comments from the Hacker News thread. These show how real practitioners and readers are reacting to this story - their opinions, pushback, personal experiences, counterarguments, and things they spotted that the article missed. Actively weave the most interesting community perspectives into your talking points: what did readers think? Did they agree or push back? Did someone share a relevant real-world experience or a sharp counterpoint? Call out representative views and name that they come from the discussion, e.g. "readers pointed out...", "commenters were skeptical because...". Don't just summarize the comments in bulk - integrate the standout voices and opinions as part of the story.\n${story.commentsText}`
+          : "";
+
         const prompt =
           `Create a detailed summary of this page, summarizing the main ideas and creating talking points that would be relevant for someone who hasn't read the article.
 For each talking point, please include why it is relevant to the story and details about why you would tell someone this.
+Where the community discussion adds useful perspectives, differing opinions, or vivid examples, make those prominent talking points too - listeners love hearing how people are actually reacting.
 
 ## Story
-${story.text}`;
+${story.text}${communityContext}`;
 
         logger.debug`Summarizing story ${index + 1}: ${story.title}`;
         const result = await summaryAgent.generate(prompt);
@@ -88,15 +91,25 @@ const generateScriptStep = createStep({
   execute: async ({ inputData }) => {
     logger.info`Generating initial podcast script`;
 
-    const date = new Date().toLocaleString("en-US", {
+    // Natural spoken date (e.g. "Friday, June 19th") - no time/timezone/year,
+    // since reading a timestamp aloud sounds unnatural for a podcast intro.
+    const spokenDate = new Date().toLocaleDateString("en-US", {
       weekday: "long",
-      year: "numeric",
       month: "long",
       day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZoneName: "short",
     });
+    const ordinal = (n: number): string => {
+      const s = ["th", "st", "nd", "rd"];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
+    const monthDay = spokenDate.replace(
+      /(\d+)$/,
+      (_, d) => ordinal(Number(d)),
+    );
+    const date = monthDay;
+
+    const tagGuidance = getSpeechTagGuidance();
 
     const prompt =
       `You're writing the script for "Hacker Insight," a tech podcast. Today is ${date}.
@@ -106,13 +119,14 @@ Your job is to turn these story summaries into a conversational, engaging monolo
 IMPORTANT: You must cover ALL ${inputData.summaries.length} stories provided below. Don't skip any.
 
 Guidelines:
-- Open with a warm, friendly greeting ("Hey everyone, welcome to Hacker Insight...") and mention the date naturally. Include a brief, enticing preview of 3-4 highlights to hook listeners (e.g., "Today we've got climate breakthroughs, rocket wisdom, and a hundred-year-old bear"). Then dive into the first story.
+- Open with a warm, friendly greeting ("Hey everyone, welcome to Hacker Insight...") and mention the date casually, the way a real host would ("It's Friday, June 19th" - never read a timestamp or year). Then a SHORT, high-level TEASE of what's coming - hint at the broad themes, common threads, or a couple of standout hooks to pull listeners in, like a movie trailer. Do NOT list every story or give a rundown - just build intrigue for what's ahead. Then dive into the first story.
 - Cover EVERY story with similar depth. Each should get 2-3 substantial paragraphs of flowing content.
 - When technical terms come up, explain them simply (e.g., "eBPF - that's a way to run tiny programs inside the Linux kernel to watch what's happening")
 - Use conversational language - contractions, complete sentences (avoid choppy fragments), rhetorical questions.
-- Transitions should be simple and natural: "Now for something different...", "Here's a fun one...", "Switching gears..."
-- IMPORTANT: End with a warm sign-off that thanks listeners and invites them back. Keep it simple like "That's all for today. Thanks for listening, and I'll catch you next time on Hacker Insight." Don't mention subscribing, comments, likes, or any platform-specific calls to action.
-
+- Where the summaries mention what Hacker News readers or commenters thought, weave those reactions in naturally - it adds a lot to occasionally reflect how practitioners are responding, where they agreed or pushed back, or a sharp comment someone made. Don't force it every story, but use the best ones.
+- IMPORTANT: Bridge smoothly from one story to the next - never jump abruptly into a new topic. Each transition should connect the two stories with a brief link: a shared theme, a contrast, a question, or a one-line reaction to what came before. Vary them and make them feel like a real host connecting the dots (e.g., "Speaking of things that sound too good to be true...", "That's the optimistic view - now for the flip side.", "On a much lighter note..."). Avoid blunt cuts like a generic "Switching gears..." followed immediately by the new topic.
+- IMPORTANT: End by stepping back to reflect on the episode as a whole - the range of topics explored, any common threads or patterns linking the stories, or a broader lesson or takeaway that ties them together. Think big picture, NOT a list of each story (the listener just heard them). Then a brief warm sign-off thanking listeners and inviting them back. Don't mention subscribing, comments, likes, or any platform-specific calls to action.
+${tagGuidance}
 What to avoid:
 - Skipping or combining stories - every story gets its own section
 - Dense sentences packing too many facts into one breath
@@ -160,18 +174,29 @@ const improveScriptOnceStep = createStep({
 
     const storiesText = inputData.summaries.join("\n\n");
 
-    // Get suggestions
+    // Get structured suggestions
+    const tagGuidance = getSpeechTagGuidance();
+    const deliveryNote = tagGuidance
+      ? "\nAlso judge the use of delivery tags (pauses, whispers, etc.) - suggest adding a tag where it would help, or removing overused ones.\n"
+      : "";
     const suggestionPrompt = `Stories:
 ${storiesText}
 
 Current Script:
-${inputData.script}`;
+${inputData.script}
+${tagGuidance}${deliveryNote}`;
 
     logger.debug`Getting improvement suggestions`;
-    const suggestionsResult = await suggestionAgent.generate(suggestionPrompt);
+    const suggestionsResult = await suggestionAgent.generate(
+      suggestionPrompt,
+      { structuredOutput: { schema: scriptSuggestionsSchema } },
+    );
+    const suggestions = suggestionsResult.object;
 
     // Check if no improvements are needed
-    if (suggestionsResult.text.trim() === NO_IMPROVEMENTS_MARKER) {
+    if (
+      !suggestions.improvementsNeeded || suggestions.suggestions.length === 0
+    ) {
       logger.info`No improvements needed - script is ready`;
       return {
         script: inputData.script,
@@ -181,12 +206,23 @@ ${inputData.script}`;
       };
     }
 
+    logger
+      .info`Found ${suggestions.suggestions.length} suggestions to apply`;
+
+    // Render structured suggestions as readable feedback for the improvement agent
+    const suggestionsText = suggestions.suggestions
+      .map((s, i) => {
+        const quote = s.quote ? `\n  Quote: "${s.quote}"` : "";
+        return `${i + 1}. [${s.category}]${quote}\n  Fix: ${s.fix}`;
+      })
+      .join("\n");
+
     // Apply improvements
     const improvementPrompt =
       `You're improving a podcast script based on editor feedback. Apply the suggestions while keeping the script natural and conversational.
 
 Editor's suggestions:
-${suggestionsResult.text}
+${suggestionsText}
 
 Original stories (for reference):
 ${storiesText}
@@ -199,7 +235,11 @@ Apply the suggestions to improve the script. Keep it:
 - Well-paced - each story gets room to breathe
 - Accessible - technical terms explained simply
 - Flowing naturally between topics
-
+${
+        tagGuidance
+          ? "- Preserve any delivery tags already in the script, and refine them per the guidance below.\n"
+          : ""
+      }${tagGuidance}
 Output the improved script as plain paragraphs only. No formatting, lists, or stage directions.`;
 
     logger.debug`Applying improvements`;
@@ -267,16 +307,9 @@ const generateAudioStep = createStep({
       };
     }
 
-    // Initialize Mastra OpenAI Voice
-    // Note: Mastra types are restrictive but gpt-4o-mini-tts works at runtime
-    const voiceConfig = getVoiceConfig();
-    const voice = new OpenAIVoice({
-      speechModel: {
-        name: voiceConfig.model as OpenAIModel,
-        apiKey: voiceConfig.apiKey,
-      },
-      speaker: voiceConfig.speaker,
-    });
+    // Initialize the configured voice provider (OpenAI or xAI/Grok)
+    const { voice, speakOptions } = createVoiceProvider();
+    logger.info`Using ${config.voiceProvider} voice provider for TTS`;
 
     // Split text into chunks and generate audio
     const textChunks = inputData.script
@@ -293,14 +326,17 @@ const generateAudioStep = createStep({
       const partFilePath = audioPath.replace(/(\.mp3)$/, `-${i}$1`);
 
       logger.debug`Generating audio chunk ${i + 1}/${textChunks.length}`;
-      const audioStream = await voice.speak(chunk, {
-        instructions: voiceConfig.instructions,
-      });
+      const audioStream = await voice.speak(chunk, speakOptions);
+      if (!audioStream) {
+        throw new Error(
+          `Voice provider returned no audio stream for chunk ${i + 1}`,
+        );
+      }
 
-      // Collect audio data from Node.js ReadableStream using async iteration
+      // Collect audio data from the byte stream using async iteration
       const audioChunks: Uint8Array[] = [];
       for await (const data of audioStream) {
-        // Handle both Buffer and Uint8Array from Node.js streams
+        // Handle both Buffer and Uint8Array from Node.js / web streams
         if (data instanceof Uint8Array) {
           audioChunks.push(data);
         } else if (typeof data === "object" && data !== null) {
@@ -355,16 +391,19 @@ const generateAudioStep = createStep({
 /**
  * Main podcast generation workflow
  */
+const workflowInputSchema = z.object({
+  storyCount: z.number().default(10),
+});
+const workflowOutputSchema = z.object({
+  transcriptPath: z.string(),
+  audioPath: z.string(),
+  generatedAt: z.string(),
+});
+
 export const podcastWorkflow = createWorkflow({
   id: "podcast-generation",
-  inputSchema: z.object({
-    storyCount: z.number().default(10),
-  }),
-  outputSchema: z.object({
-    transcriptPath: z.string(),
-    audioPath: z.string(),
-    generatedAt: z.string(),
-  }),
+  inputSchema: workflowInputSchema,
+  outputSchema: workflowOutputSchema,
 })
   .then(fetchTopStoriesStep)
   .then(fetchStoriesMetadataStep)
@@ -374,16 +413,13 @@ export const podcastWorkflow = createWorkflow({
   // Run improvement loop (exits early if no improvements needed)
   .dowhile(
     improveScriptOnceStep,
-    ({ inputData }) =>
-      Promise.resolve(
-        inputData.shouldContinue &&
-          inputData.iterationCount < config.improvementIterations,
-      ),
+    // deno-lint-ignore require-await
+    async ({ inputData }) =>
+      inputData.shouldContinue &&
+      inputData.iterationCount < config.improvementIterations,
   )
   .then(generateAudioStep)
   .commit();
 
-export type PodcastWorkflowInput = z.infer<typeof podcastWorkflow.inputSchema>;
-export type PodcastWorkflowOutput = z.infer<
-  typeof podcastWorkflow.outputSchema
->;
+export type PodcastWorkflowInput = z.infer<typeof workflowInputSchema>;
+export type PodcastWorkflowOutput = z.infer<typeof workflowOutputSchema>;

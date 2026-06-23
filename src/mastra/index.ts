@@ -5,10 +5,12 @@
 // Agents
 export {
   improvementAgent,
-  NO_IMPROVEMENTS_MARKER,
   podcastAgent,
+  type ScriptSuggestions,
+  scriptSuggestionsSchema,
   STYLE_INSTRUCTIONS,
   suggestionAgent,
+  type SuggestionCategory,
   summaryAgent,
 } from "./agents/index.ts";
 

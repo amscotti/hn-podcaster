@@ -5,6 +5,7 @@ import { getAgentModelConfig } from "../../lib/providers.ts";
  * Agent for generating story summaries
  */
 export const summaryAgent = new Agent({
+  id: "summary-agent",
   name: "Summary Agent",
   instructions:
     `You are preparing article summaries for a podcast host who needs to explain tech topics to a general audience.

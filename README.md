@@ -27,10 +27,13 @@ conversational podcast script, and converts it to audio.
 
 - Fetches top stories from Hacker News
 - Downloads and extracts text from webpages and PDFs
+- Pulls top HN comments for community views and opinions on each story
 - Generates summaries and talking points using AI agents
 - Creates conversational podcast scripts
-- Iteratively refines scripts (configurable improvement loops)
-- Converts scripts to MP3 audio using OpenAI TTS
+- Iteratively refines scripts (configurable improvement loops, using
+  structured-output suggestions for reliable feedback)
+- Converts scripts to MP3 audio using OpenAI TTS or xAI (Grok) TTS
+- Streams live workflow progress to the console as each step runs
 - Saves transcripts and audio to the output directory
 
 ## Setup
@@ -75,14 +78,15 @@ OPENAI_API_KEY=your_openai_key_here
 
 **Supported providers and their models:**
 
-| Provider  | Summary Model               | Main Model             |
-| --------- | --------------------------- | ---------------------- |
-| xai       | grok-4-1-fast-non-reasoning | grok-4-1-fast          |
-| openai    | gpt-5-mini                  | gpt-5.2                |
-| anthropic | claude-haiku-4-5            | claude-sonnet-4-5      |
-| google    | gemini-3-pro-preview        | gemini-3-flash-preview |
+| Provider  | Summary Model        | Main Model             |
+| --------- | -------------------- | ---------------------- |
+| xai       | grok-4.3             | grok-4.3               |
+| openai    | gpt-5-mini           | gpt-5.2                |
+| anthropic | claude-haiku-4-5     | claude-sonnet-4-5      |
+| google    | gemini-3-pro-preview | gemini-3-flash-preview |
 
-OpenAI is always required for text-to-speech (unless `SKIP_AUDIO=true`).
+OpenAI is required for text-to-speech by default (unless `SKIP_AUDIO=true` or
+`VOICE_PROVIDER=xai`, which uses the xAI/Grok TTS API instead).
 
 ### Optional Settings
 
@@ -93,12 +97,20 @@ STORY_COUNT=10
 # Number of script improvement iterations (default: 5)
 IMPROVEMENT_ITERATIONS=5
 
+# Top HN comments to fetch per story for community context (default: 25, 0 disables)
+COMMENT_COUNT=25
+
 # Output directory for generated files (default: ./output)
 OUTPUT_DIR=./output
 
 # Skip audio generation, transcript only (default: false)
 # Useful for faster iteration on script quality
 SKIP_AUDIO=true
+
+# Voice / Text-to-Speech (optional)
+# VOICE_PROVIDER=openai  # openai (default) or xai (Grok TTS)
+# XAI_VOICE_ID=ara       # xAI voice: eve, ara, rex, sal, leo (default: ara)
+# XAI_VOICE_LANGUAGE=en  # BCP-47 code or "auto" (default: en)
 ```
 
 ### 4. Run
@@ -178,6 +190,6 @@ Four specialized agents handle different aspects:
 
 ## Requirements
 
-- Deno 2.5+
+- Deno 2.8+
 - API key for at least one supported AI provider
 - OpenAI API key (required for text-to-speech, unless skipping audio)
