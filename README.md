@@ -100,6 +100,10 @@ IMPROVEMENT_ITERATIONS=5
 # Top HN comments to fetch per story for community context (default: 25, 0 disables)
 COMMENT_COUNT=25
 
+# Target podcast length in minutes (default: 10)
+# Drives the script word count (~140 words/minute spoken)
+TARGET_DURATION_MINUTES=10
+
 # Output directory for generated files (default: ./output)
 OUTPUT_DIR=./output
 
@@ -111,6 +115,10 @@ SKIP_AUDIO=true
 # VOICE_PROVIDER=openai  # openai (default) or xai (Grok TTS)
 # XAI_VOICE_ID=ara       # xAI voice: eve, ara, rex, sal, leo (default: ara)
 # XAI_VOICE_LANGUAGE=en  # BCP-47 code or "auto" (default: en)
+
+# Content Fetching (optional)
+# JINA_API_KEY=           # Enables Jina reader fallback (https://r.jina.ai) for
+                          # articles that block the direct fetch with bot detection
 ```
 
 ### 4. Run

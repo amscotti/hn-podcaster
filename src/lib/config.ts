@@ -50,6 +50,12 @@ const ConfigSchema = z.object({
     .max(50)
     .default(25)
     .describe("Number of top HN comments to fetch per story (0 disables)"),
+  targetDurationMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .default(10)
+    .describe("Target podcast length in minutes (drives script word count)"),
   outputDir: z
     .string()
     .min(1)
@@ -74,6 +80,14 @@ const ConfigSchema = z.object({
     .min(1)
     .default("en")
     .describe("BCP-47 language code for xAI TTS (e.g. en, or auto)"),
+
+  // Content fetching settings
+  jinaApiKey: z
+    .string()
+    .optional()
+    .describe(
+      "Optional Jina reader API key. When set, blocked article fetches fall back to the Jina reader proxy (https://r.jina.ai)",
+    ),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -190,11 +204,13 @@ function loadConfig(): Config {
     storyCount: parseIntEnv("STORY_COUNT"),
     improvementIterations: parseIntEnv("IMPROVEMENT_ITERATIONS"),
     commentCount: parseIntEnv("COMMENT_COUNT"),
+    targetDurationMinutes: parseIntEnv("TARGET_DURATION_MINUTES"),
     outputDir: Deno.env.get("OUTPUT_DIR"),
     skipAudio,
     voiceProvider,
     xaiVoiceId: Deno.env.get("XAI_VOICE_ID"),
     xaiVoiceLanguage: Deno.env.get("XAI_VOICE_LANGUAGE"),
+    jinaApiKey: Deno.env.get("JINA_API_KEY"),
   };
 
   // Remove undefined values so Zod defaults apply

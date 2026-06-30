@@ -111,12 +111,20 @@ const generateScriptStep = createStep({
 
     const tagGuidance = getSpeechTagGuidance();
 
+    // Target word count for the script. Podcast narration runs ~140 wpm once
+    // delivery tags (pauses, etc.) are accounted for, so this maps the
+    // configured duration to a concrete word budget the model can hit.
+    const targetWords = config.targetDurationMinutes * 140;
+    const perStoryWords = Math.round(targetWords / inputData.summaries.length);
+
     const prompt =
       `You're writing the script for "Hacker Insight," a tech podcast. Today is ${date}.
 
 Your job is to turn these story summaries into a conversational, engaging monologue that sounds like a real person talking to curious listeners.
 
 IMPORTANT: You must cover ALL ${inputData.summaries.length} stories provided below. Don't skip any.
+
+LENGTH TARGET (very important): Aim for roughly ${targetWords} words total - about ${config.targetDurationMinutes} minutes spoken. With ${inputData.summaries.length} stories, that's around ${perStoryWords} words per story (plus intro/outro). Stay reasonably close to this target - do NOT write a terse summary, and do NOT pad with filler. If you're unsure, favor slightly more depth over brevity.
 
 Guidelines:
 - Open with a warm, friendly greeting ("Hey everyone, welcome to Hacker Insight...") and mention the date casually, the way a real host would ("It's Friday, June 19th" - never read a timestamp or year). Then a SHORT, high-level TEASE of what's coming - hint at the broad themes, common threads, or a couple of standout hooks to pull listeners in, like a movie trailer. Do NOT list every story or give a rundown - just build intrigue for what's ahead. Then dive into the first story.
@@ -174,6 +182,10 @@ const improveScriptOnceStep = createStep({
 
     const storiesText = inputData.summaries.join("\n\n");
 
+    // Word-count context so the editor can flag drift from the target length.
+    const targetWords = config.targetDurationMinutes * 140;
+    const currentWords = inputData.script.split(/\s+/).filter(Boolean).length;
+
     // Get structured suggestions
     const tagGuidance = getSpeechTagGuidance();
     const deliveryNote = tagGuidance
@@ -184,6 +196,8 @@ ${storiesText}
 
 Current Script:
 ${inputData.script}
+
+LENGTH: The script is currently ${currentWords} words. Target is ~${targetWords} words (~${config.targetDurationMinutes} minutes spoken). Flag it under category "length" if it's more than ~15% off target.
 ${tagGuidance}${deliveryNote}`;
 
     logger.debug`Getting improvement suggestions`;
@@ -220,6 +234,8 @@ ${tagGuidance}${deliveryNote}`;
     // Apply improvements
     const improvementPrompt =
       `You're improving a podcast script based on editor feedback. Apply the suggestions while keeping the script natural and conversational.
+
+LENGTH: Current script is ${currentWords} words; target is ~${targetWords} words (~${config.targetDurationMinutes} minutes). Keep the final length close to the target - expand with substance (not filler) if too short, trim repetition if too long.
 
 Editor's suggestions:
 ${suggestionsText}

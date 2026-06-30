@@ -18,6 +18,7 @@ export const SUGGESTION_CATEGORIES = [
   "weak-outro",
   "platform-language",
   "missing-intro-overview",
+  "length",
   "delivery",
   "other",
 ] as const;
@@ -87,7 +88,9 @@ Read the script critically and look for:
 
 9. Weak intro tease (missing-intro-overview) - Does the intro either list every story like a menu, or fail to hook the listener? It should be a short, high-level tease of themes and standout hooks (like a movie trailer), not a full rundown. Flag intros that are too long/detailed or have no hook.
 
-10. Delivery (delivery) - If delivery tags are in use, flag spots where a pause/whisper/emphasis tag would sound more natural, or where tags are overused/awkward. Only applies when the prompt mentions delivery tags.
+10. Length (length) - Is the script significantly shorter or longer than the target word count given in the prompt? If it's too short, suggest where to add depth (more examples, explanation, or community reactions) - never pad with filler. If too long, suggest where to trim repetition or tangents. Only flag when the word count is noticeably off (more than ~15% away from target).
+
+11. Delivery (delivery) - If delivery tags are in use, flag spots where a pause/whisper/emphasis tag would sound more natural, or where tags are overused/awkward. Only applies when the prompt mentions delivery tags.
 
 For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. Set improvementsNeeded to false ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
   model: getAgentModelConfig("summary"),
