@@ -32,7 +32,7 @@ conversational podcast script, and converts it to audio.
 - Creates conversational podcast scripts
 - Iteratively refines scripts (configurable improvement loops, using
   structured-output suggestions for reliable feedback)
-- Converts scripts to MP3 audio using OpenAI TTS or xAI (Grok) TTS
+- Converts scripts to MP3 audio using xAI (Grok) TTS or OpenAI TTS
 - Streams live workflow progress to the console as each step runs
 - Saves transcripts and audio to the output directory
 
@@ -69,24 +69,25 @@ Create a `.env` file in the project root:
 # Options: xai, openai, anthropic, google
 # AI_PROVIDER=xai
 
-# API Keys (at least one AI provider required, OpenAI required for voice)
+# API Keys (at least one AI provider required)
+# For audio: XAI_API_KEY (default voice) or OPENAI_API_KEY (VOICE_PROVIDER=openai)
 XAI_API_KEY=your_xai_key_here
-OPENAI_API_KEY=your_openai_key_here
+# OPENAI_API_KEY=your_openai_key_here
 # ANTHROPIC_API_KEY=your_anthropic_key_here
 # GOOGLE_GENERATIVE_AI_API_KEY=your_google_key_here
 ```
 
 **Supported providers and their models:**
 
-| Provider  | Summary Model        | Main Model             |
-| --------- | -------------------- | ---------------------- |
-| xai       | grok-4.3             | grok-4.3               |
-| openai    | gpt-5-mini           | gpt-5.2                |
-| anthropic | claude-haiku-4-5     | claude-sonnet-4-5      |
-| google    | gemini-3-pro-preview | gemini-3-flash-preview |
+| Provider  | Summary Model          | Main Model           |
+| --------- | ---------------------- | -------------------- |
+| xai       | grok-4.5               | grok-4.5             |
+| openai    | gpt-5-mini             | gpt-5.2              |
+| anthropic | claude-haiku-4-5       | claude-sonnet-4-5    |
+| google    | gemini-3-flash-preview | gemini-3-pro-preview |
 
-OpenAI is required for text-to-speech by default (unless `SKIP_AUDIO=true` or
-`VOICE_PROVIDER=xai`, which uses the xAI/Grok TTS API instead).
+**Voice / TTS** defaults to **xAI** (Grok TTS). Set `VOICE_PROVIDER=openai` to
+use OpenAI TTS instead, or `SKIP_AUDIO=true` for transcript-only runs.
 
 ### Optional Settings
 
@@ -94,7 +95,7 @@ OpenAI is required for text-to-speech by default (unless `SKIP_AUDIO=true` or
 # Number of Hacker News stories to include (default: 10)
 STORY_COUNT=10
 
-# Number of script improvement iterations (default: 5)
+# Number of script improvement iterations (default: 5, 0 skips the improve loop)
 IMPROVEMENT_ITERATIONS=5
 
 # Top HN comments to fetch per story for community context (default: 25, 0 disables)
@@ -112,9 +113,12 @@ OUTPUT_DIR=./output
 SKIP_AUDIO=true
 
 # Voice / Text-to-Speech (optional)
-# VOICE_PROVIDER=openai  # openai (default) or xai (Grok TTS)
+# VOICE_PROVIDER=xai     # xai (default) or openai
 # XAI_VOICE_ID=ara       # xAI voice: eve, ara, rex, sal, leo (default: ara)
 # XAI_VOICE_LANGUAGE=en  # BCP-47 code or "auto" (default: en)
+
+# Logging (optional)
+# LOG_LEVEL=info         # trace | debug | info | warning | error | fatal
 
 # Content Fetching (optional)
 # JINA_API_KEY=           # Enables Jina reader fallback (https://r.jina.ai) for
@@ -158,8 +162,8 @@ src/
 │   │   └── index.ts          # Agent exports
 │   ├── steps/                # Workflow step definitions
 │   │   ├── fetch-stories.ts  # Fetch HN story IDs
-│   │   ├── fetch-metadata.ts # Fetch story details
-│   │   ├── download-content.ts # Download article text (HTML + PDF)
+│   │   ├── fetch-metadata.ts # Fetch story details, backfill URL stories
+│   │   ├── download-content.ts # Download article text (HTML + PDF), drop failures
 │   │   └── index.ts          # Step exports
 │   ├── workflows/            # Workflow definitions
 │   │   └── podcast-generation.ts
@@ -168,6 +172,9 @@ src/
 │   ├── config.ts             # Configuration with Zod validation
 │   ├── providers.ts          # AI provider configuration
 │   ├── hackernews.ts         # HN API client
+│   ├── http.ts               # fetchWithTimeout helper
+│   ├── format-story.ts       # Story formatting & download filtering helpers
+│   ├── xai-voice.ts          # xAI (Grok) TTS voice provider
 │   └── logger.ts             # LogTape configuration
 └── __tests__/                # Test files
 app.ts                        # Entry point
@@ -180,12 +187,13 @@ The project uses [Mastra](https://mastra.ai), a TypeScript AI framework, for
 workflow orchestration. The workflow is composed of sequential steps:
 
 1. **Fetch Stories** - Get top story IDs from Hacker News
-2. **Fetch Metadata** - Get story details and filter for valid URLs
+2. **Fetch Metadata** - Resolve details and backfill until `STORY_COUNT` link
+   stories
 3. **Download Content** - Fetch webpage HTML or PDF and extract text
 4. **Generate Summaries** - AI agents create summaries and talking points
-5. **Generate Script** - Create initial podcast script
-6. **Improve Script** - Iterative refinement (suggest → apply)
-7. **Generate Audio** - Convert script to MP3 via OpenAI TTS
+5. **Generate Script** - Create initial podcast script from lean summaries
+6. **Improve Script** - Iterative refinement (skipped when iterations is 0)
+7. **Generate Audio** - Convert script to MP3 via xAI or OpenAI TTS
 
 ### AI Agents
 
@@ -198,6 +206,7 @@ Four specialized agents handle different aspects:
 
 ## Requirements
 
-- Deno 2.8+
+- Deno 2.9+
 - API key for at least one supported AI provider
-- OpenAI API key (required for text-to-speech, unless skipping audio)
+- xAI API key for default TTS (or OpenAI if `VOICE_PROVIDER=openai`; or
+  `SKIP_AUDIO=true`)

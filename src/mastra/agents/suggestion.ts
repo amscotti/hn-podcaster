@@ -82,15 +82,15 @@ Read the script critically and look for:
 
 7. Abrupt transitions (abrupt-transition) - Does it jump bluntly from one story into the next with no bridge, or lean on a generic "Switching gears..." right before the new topic? Each transition should connect the two stories - a shared theme, contrast, question, or one-line reaction. Flag every spot where one story ends and the next begins with no connecting link.
 
-7. Missing or weak outro (weak-outro) - Does the script end abruptly or just list each story like a menu? It should step back for a big-picture reflection on the range of topics, common threads, or a lesson learned - NOT a precise recap. Flag outros that are missing, too list-like, or have no reflection.
+8. Missing or weak outro (weak-outro) - Does the script end abruptly or just list each story like a menu? It should step back for a big-picture reflection on the range of topics, common threads, or a lesson learned - NOT a precise recap. Flag outros that are missing, too list-like, or have no reflection.
 
-8. Platform-specific language (platform-language) - Does the outro mention "subscribe", "like", "comment below", or other platform-specific calls to action? These should be removed.
+9. Platform-specific language (platform-language) - Does the outro mention "subscribe", "like", "comment below", or other platform-specific calls to action? These should be removed.
 
-9. Weak intro tease (missing-intro-overview) - Does the intro either list every story like a menu, or fail to hook the listener? It should be a short, high-level tease of themes and standout hooks (like a movie trailer), not a full rundown. Flag intros that are too long/detailed or have no hook.
+10. Weak intro tease (missing-intro-overview) - Does the intro either list every story like a menu, or fail to hook the listener? It should be a short, high-level tease of themes and standout hooks (like a movie trailer), not a full rundown. Flag intros that are too long/detailed or have no hook.
 
-10. Length (length) - Is the script significantly shorter or longer than the target word count given in the prompt? If it's too short, suggest where to add depth (more examples, explanation, or community reactions) - never pad with filler. If too long, suggest where to trim repetition or tangents. Only flag when the word count is noticeably off (more than ~15% away from target).
+11. Length (length) - Is the script significantly shorter or longer than the target word count given in the prompt? If it's too short, suggest where to add depth (more examples, explanation, or community reactions) - never pad with filler. If too long, suggest where to trim repetition or tangents. Only flag when the word count is noticeably off (more than ~15% away from target).
 
-11. Delivery (delivery) - If delivery tags are in use, flag spots where a pause/whisper/emphasis tag would sound more natural, or where tags are overused/awkward. Only applies when the prompt mentions delivery tags.
+12. Delivery (delivery) - If delivery tags are in use, flag spots where a pause/whisper/emphasis tag would sound more natural, or where tags are overused/awkward. Only applies when the prompt mentions delivery tags.
 
 For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. Set improvementsNeeded to false ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
   model: getAgentModelConfig("summary"),

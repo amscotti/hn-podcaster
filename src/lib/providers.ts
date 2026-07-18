@@ -12,10 +12,10 @@ const AI_PROVIDER_MODELS: Record<
   AIProvider,
   { summary: string; main: string }
 > = {
-  xai: { summary: "grok-4.3", main: "grok-4.3" },
+  xai: { summary: "grok-4.5", main: "grok-4.5" },
   openai: { summary: "gpt-5-mini", main: "gpt-5.2" },
   anthropic: { summary: "claude-haiku-4-5", main: "claude-sonnet-4-5" },
-  google: { summary: "gemini-3-pro-preview", main: "gemini-3-flash-preview" },
+  google: { summary: "gemini-3-flash-preview", main: "gemini-3-pro-preview" },
 };
 
 // OpenAI voice settings
@@ -58,9 +58,9 @@ export function getAgentModelConfig(type: "summary" | "main"): {
  */
 export interface VoiceLike {
   speak(
-    input: string | NodeJS.ReadableStream,
+    input: string,
     options?: Record<string, unknown>,
-  ): Promise<NodeJS.ReadableStream | void>;
+  ): Promise<AsyncIterable<unknown> | void>;
 }
 
 /**
@@ -75,7 +75,7 @@ export interface VoiceProviderHandle {
 
 /**
  * Create the configured voice provider for TTS.
- * Supports OpenAI (default) and xAI (Grok) via VOICE_PROVIDER.
+ * Supports xAI (default) and OpenAI via VOICE_PROVIDER.
  */
 export function createVoiceProvider(): VoiceProviderHandle {
   switch (config.voiceProvider) {

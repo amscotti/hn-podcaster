@@ -1,4 +1,5 @@
 import { z } from "@zod/zod";
+import { fetchWithTimeout, HN_FETCH_TIMEOUT_MS } from "./http.ts";
 
 const STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json";
 const ITEM_URL_BASE = "https://hacker-news.firebaseio.com/v0/item";
@@ -22,6 +23,23 @@ export const StorySchema = z.object({
 // Export the Story type for use in other files
 export type Story = z.infer<typeof StorySchema>;
 
+/** Schema for a story guaranteed to have a URL (external link posts). */
+export const StoryWithUrlSchema = StorySchema.extend({
+  url: z.string(),
+});
+
+/** Story guaranteed to have a URL (external link posts). */
+export type StoryWithUrl = z.infer<typeof StoryWithUrlSchema>;
+
+/**
+ * True when the item is a link story suitable for article download.
+ */
+export function isStoryWithUrl(story: Story): story is StoryWithUrl {
+  return story.type === "story" &&
+    typeof story.url === "string" &&
+    story.url.length > 0;
+}
+
 // Schema for a Hacker News comment item
 export const CommentSchema = z.object({
   id: z.number(),
@@ -38,7 +56,11 @@ export type Comment = z.infer<typeof CommentSchema>;
  * @returns Promise<number[]> Array of story IDs
  */
 export async function fetchTopStories(): Promise<number[]> {
-  const response = await fetch(STORIES_URL);
+  const response = await fetchWithTimeout(
+    STORIES_URL,
+    {},
+    HN_FETCH_TIMEOUT_MS,
+  );
   if (!response.ok) {
     throw new Error(
       `Failed to fetch top stories: ${response.status} ${response.statusText}`,
@@ -49,14 +71,33 @@ export async function fetchTopStories(): Promise<number[]> {
 }
 
 /**
- * Fetches a story by ID from the Hacker News API
+ * Fetches a story by ID from the Hacker News API.
+ * Returns null for missing/deleted items, non-objects, or schema mismatches
+ * so callers can soft-skip a single bad ID without failing the whole run.
+ * Network/timeout errors also soft-return null (logged by the caller if needed).
+ *
  * @param id Story ID to fetch
- * @returns Promise<Story> Validated story object from the Hacker News API
+ * @returns Promise<Story | null>
  */
-export async function fetchStory(id: number): Promise<Story> {
-  const storyResponse = await fetch(`${ITEM_URL_BASE}/${id}.json`);
-  const data = await storyResponse.json();
-  return StorySchema.parse(data);
+export async function fetchStory(id: number): Promise<Story | null> {
+  try {
+    const storyResponse = await fetchWithTimeout(
+      `${ITEM_URL_BASE}/${id}.json`,
+      {},
+      HN_FETCH_TIMEOUT_MS,
+    );
+    if (!storyResponse.ok) {
+      return null;
+    }
+    const data: unknown = await storyResponse.json();
+    if (data === null || typeof data !== "object") {
+      return null;
+    }
+    const parsed = StorySchema.safeParse(data);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -64,7 +105,11 @@ export async function fetchStory(id: number): Promise<Story> {
  */
 async function fetchItemRaw(id: number): Promise<unknown | null> {
   try {
-    const response = await fetch(`${ITEM_URL_BASE}/${id}.json`);
+    const response = await fetchWithTimeout(
+      `${ITEM_URL_BASE}/${id}.json`,
+      {},
+      HN_FETCH_TIMEOUT_MS,
+    );
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -99,4 +144,57 @@ export async function fetchComments(
         typeof obj["text"] === "string";
     })
     .map((item) => CommentSchema.parse(item));
+}
+
+/** How many story IDs to resolve in parallel while backfilling. */
+const SELECT_BATCH_SIZE = 10;
+
+/**
+ * Stop after this many consecutive null responses (network errors, deleted
+ * items). In normal operation deleted items are rare among top stories; a long
+ * run of nulls almost certainly indicates a systemic HN API outage. The
+ * threshold of 30 (three full batches) avoids false positives while bounding
+ * worst-case latency to ~30 seconds instead of ~500.
+ */
+const MAX_CONSECUTIVE_NULLS = 30;
+
+/**
+ * Walk `storyIds` in order, fetching metadata in small batches, until we have
+ * `storyCount` link stories (type=story with a URL). Soft-skips null/deleted/
+ * invalid items so a single bad ID cannot abort the run. Bails early after
+ * {@link MAX_CONSECUTIVE_NULLS} consecutive nulls to avoid a multi-minute hang
+ * during a systemic HN API outage.
+ */
+export async function selectStoriesWithUrls(
+  storyIds: number[],
+  storyCount: number,
+): Promise<StoryWithUrl[]> {
+  const valid: StoryWithUrl[] = [];
+  const target = Math.max(0, storyCount);
+  let consecutiveNulls = 0;
+
+  for (
+    let i = 0;
+    i < storyIds.length && valid.length < target;
+    i += SELECT_BATCH_SIZE
+  ) {
+    const batch = storyIds.slice(i, i + SELECT_BATCH_SIZE);
+    const results = await Promise.all(batch.map((id) => fetchStory(id)));
+
+    for (const story of results) {
+      if (story === null) {
+        consecutiveNulls++;
+        if (consecutiveNulls >= MAX_CONSECUTIVE_NULLS) {
+          return valid;
+        }
+        continue;
+      }
+      consecutiveNulls = 0;
+      if (!isStoryWithUrl(story)) continue;
+      valid.push(story);
+      if (valid.length >= target) break;
+    }
+  }
+
+  return valid;
 }

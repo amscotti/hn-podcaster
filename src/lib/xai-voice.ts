@@ -10,6 +10,7 @@
  */
 
 import { MastraVoice } from "@mastra/core/voice";
+import { fetchWithTimeout, TTS_FETCH_TIMEOUT_MS } from "./http.ts";
 
 const XAI_TTS_URL = "https://api.x.ai/v1/tts";
 
@@ -37,7 +38,7 @@ interface XaiSpeakOptions {
  * Used when speak() is called with a ReadableStream input instead of a string.
  */
 async function readInputStream(
-  input: string | NodeJS.ReadableStream,
+  input: string | ReadableStream,
 ): Promise<string> {
   if (typeof input === "string") return input;
   let text = "";
@@ -74,10 +75,8 @@ export class XaiVoice extends MastraVoice<
    * Convert text to speech via xAI's TTS API.
    * Returns the raw audio byte stream (MP3 by default).
    */
-  async speak(
-    input: string | NodeJS.ReadableStream,
-    options?: XaiSpeakOptions,
-  ): Promise<NodeJS.ReadableStream | void> {
+  // deno-lint-ignore no-explicit-any
+  async speak(input: any, options?: XaiSpeakOptions): Promise<any> {
     const text = await readInputStream(input);
     if (!text.trim()) {
       throw new Error("Cannot synthesize empty text");
@@ -86,19 +85,23 @@ export class XaiVoice extends MastraVoice<
     const voiceId = options?.speaker ?? this.speaker ?? "ara";
     const speed = options?.speed ?? this.speed;
 
-    const response = await fetch(XAI_TTS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
+    const response = await fetchWithTimeout(
+      XAI_TTS_URL,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          voice_id: voiceId,
+          language: this.language,
+          speed,
+        }),
       },
-      body: JSON.stringify({
-        text,
-        voice_id: voiceId,
-        language: this.language,
-        speed,
-      }),
-    });
+      TTS_FETCH_TIMEOUT_MS,
+    );
 
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
@@ -113,7 +116,7 @@ export class XaiVoice extends MastraVoice<
       throw new Error("xAI TTS returned no audio body");
     }
 
-    // response.body is a web ReadableStream<Uint8Array>; it is async-iterable
+    // response.body is a web ReadableStream; it is async-iterable
     // in Deno and yields Uint8Array chunks, which is what the workflow expects.
     // deno-lint-ignore no-explicit-any
     return response.body as any;

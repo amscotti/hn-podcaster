@@ -1,12 +1,23 @@
 import { createStep } from "@mastra/core/workflows";
 import { z } from "@zod/zod";
-import { fetchStory, StorySchema } from "../../lib/hackernews.ts";
+import {
+  selectStoriesWithUrls,
+  StoryWithUrlSchema,
+} from "../../lib/hackernews.ts";
 import { getAppLogger } from "../../lib/logger.ts";
 
 const logger = getAppLogger("steps");
 
 /**
- * Step 2: Fetch story metadata for each story ID
+ * Extra URL stories beyond STORY_COUNT. Download failures are dropped later;
+ * this buffer keeps us closer to the target episode size when a few pages 403.
+ */
+export const DOWNLOAD_CANDIDATE_BUFFER = 5;
+
+/**
+ * Step 2: Fetch story metadata and backfill until we have enough URL stories.
+ * Selects `storyCount + DOWNLOAD_CANDIDATE_BUFFER` candidates so the download
+ * step can drop failures and still aim for the configured count.
  */
 export const fetchStoriesMetadataStep = createStep({
   id: "fetch-stories-metadata",
@@ -15,20 +26,31 @@ export const fetchStoriesMetadataStep = createStep({
     storyCount: z.number(),
   }),
   outputSchema: z.object({
-    stories: z.array(StorySchema),
+    stories: z.array(StoryWithUrlSchema),
+    storyCount: z.number(),
+    storyIds: z.array(z.number()),
   }),
   execute: async ({ inputData }) => {
-    logger.info`Fetching metadata for ${inputData.storyIds.length} stories`;
-    const allStories = await Promise.all(
-      inputData.storyIds.map((id) => fetchStory(id)),
+    const candidateCount = inputData.storyCount + DOWNLOAD_CANDIDATE_BUFFER;
+    logger
+      .info`Selecting ${candidateCount} URL stories (${inputData.storyCount} target + ${DOWNLOAD_CANDIDATE_BUFFER} buffer) from ${inputData.storyIds.length} IDs`;
+
+    const stories = await selectStoriesWithUrls(
+      inputData.storyIds,
+      candidateCount,
     );
 
-    // Filter for valid stories with URLs
-    const validStories = allStories.filter(
-      (story) => story.type === "story" && story.url,
-    );
+    if (stories.length < candidateCount) {
+      logger
+        .warn`Only found ${stories.length}/${candidateCount} stories with URLs in the top list`;
+    } else {
+      logger.info`Found ${stories.length} candidate stories with URLs`;
+    }
 
-    logger.info`Found ${validStories.length} valid stories with URLs`;
-    return { stories: validStories };
+    return {
+      stories,
+      storyCount: inputData.storyCount,
+      storyIds: inputData.storyIds,
+    };
   },
 });
