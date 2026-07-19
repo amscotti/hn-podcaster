@@ -40,6 +40,12 @@ export const fetchStoriesMetadataStep = createStep({
       candidateCount,
     );
 
+    if (stories.length === 0) {
+      throw new Error(
+        "No link stories found in the top HN list. The Hacker News API may be unavailable or all top items may be text posts — retry later.",
+      );
+    }
+
     if (stories.length < candidateCount) {
       logger
         .warn`Only found ${stories.length}/${candidateCount} stories with URLs in the top list`;

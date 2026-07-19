@@ -57,6 +57,60 @@ Deno.test("fetchWithTimeout - aborts stalled body after timeout", async () => {
     const res = await fetchWithTimeout("https://example.com/stall", {}, 50);
     await assertRejects(
       () => res.text(),
+      DOMException,
+      "Aborted",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("fetchWithTimeout - caller signal aborts without timeout conversion", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (_input, init) => {
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        reject(new DOMException("Aborted", "AbortError"));
+      });
+      // never resolve — wait for abort
+    });
+  };
+  const caller = new AbortController();
+  try {
+    const promise = fetchWithTimeout(
+      "https://example.com",
+      { signal: caller.signal },
+      5_000,
+    );
+    caller.abort();
+    // Caller abort must surface as AbortError, NOT our "timed out" TypeError
+    await assertRejects(() => promise, DOMException, "Aborted");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("fetchWithTimeout - timeout still applies when caller signal provided", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (_input, init) => {
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        reject(new DOMException("Aborted", "AbortError"));
+      });
+      // never resolve — only the composed timeout signal can abort
+    });
+  };
+  const caller = new AbortController(); // never aborted
+  try {
+    await assertRejects(
+      () =>
+        fetchWithTimeout(
+          "https://example.com/slow",
+          { signal: caller.signal },
+          50,
+        ),
+      TypeError,
+      "timed out",
     );
   } finally {
     globalThis.fetch = originalFetch;

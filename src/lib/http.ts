@@ -19,29 +19,34 @@ export const TTS_FETCH_TIMEOUT_MS = 120_000;
  * retrieval and response-body consumption.
  *
  * The timer stays active after headers arrive so a server that sends headers
- * and then stalls the body is still aborted. A passthrough TransformStream
- * wraps the body so the timer is cleared on normal stream completion.
+ * and then stalls the body is still aborted. The body is wrapped in a
+ * reader-based stream that clears the timer on completion, error, or cancel.
  *
- * If `init.signal` is already set, it is used as-is (caller owns cancellation).
+ * If `init.signal` is provided, it is composed with the timeout signal via
+ * `AbortSignal.any` — caller cancellation and the timeout both apply. A
+ * caller-initiated abort is re-thrown as-is; only a timeout abort becomes a
+ * `TypeError("Request timed out...")`.
  */
 export async function fetchWithTimeout(
   input: string | URL | Request,
   init: RequestInit = {},
-  timeoutMs: number = ARTICLE_FETCH_TIMEOUT_MS,
+  timeoutMs: number,
 ): Promise<Response> {
-  if (init.signal) {
-    return await fetch(input, init);
-  }
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, controller.signal])
+    : controller.signal;
 
   let response: Response;
   try {
-    response = await fetch(input, { ...init, signal: controller.signal });
+    response = await fetch(input, { ...init, signal });
   } catch (error) {
     clearTimeout(timer);
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (
+      controller.signal.aborted &&
+      error instanceof DOMException && error.name === "AbortError"
+    ) {
       throw new TypeError(`Request timed out after ${timeoutMs}ms: ${input}`);
     }
     throw error;
@@ -53,16 +58,31 @@ export async function fetchWithTimeout(
     return response;
   }
 
-  // Pipe through an identity transform whose flush() clears the timer when
-  // the body is fully consumed. If the body stalls, the timer fires and
-  // aborts the controller, which errors the stream for the caller.
-  const body = response.body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      flush() {
+  // Wrap the body so the timer is cleared on completion, error, or cancel —
+  // a bare TransformStream only flushes on clean completion and would leak
+  // the timer on error. If the body stalls, the timer fires and aborts the
+  // controller, which errors the reader for the caller.
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          clearTimeout(timer);
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (error) {
         clearTimeout(timer);
-      },
-    }),
-  );
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      clearTimeout(timer);
+      return reader.cancel(reason);
+    },
+  });
 
   return new Response(body, {
     status: response.status,
