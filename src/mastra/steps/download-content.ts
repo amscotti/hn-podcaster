@@ -5,8 +5,16 @@ import { extractText, getDocumentProxy } from "unpdf";
 import {
   type Comment,
   fetchComments,
-  StorySchema,
+  selectStoriesWithUrls,
+  type StoryWithUrl,
+  StoryWithUrlSchema,
 } from "../../lib/hackernews.ts";
+import {
+  ARTICLE_FETCH_TIMEOUT_MS,
+  fetchWithTimeout,
+  JINA_FETCH_TIMEOUT_MS,
+} from "../../lib/http.ts";
+import { keepSuccessfulDownloads } from "../../lib/format-story.ts";
 import { config } from "../../lib/config.ts";
 import { getAppLogger } from "../../lib/logger.ts";
 
@@ -83,7 +91,7 @@ function extractHtmlText(buffer: ArrayBuffer): string {
  */
 function isTransient(error: unknown, status: number): boolean {
   if (status >= 500) return true;
-  // fetch() throws a TypeError on network/transport failures
+  // fetch() throws a TypeError on network/transport failures (incl. timeouts)
   return error instanceof TypeError;
 }
 
@@ -102,7 +110,11 @@ async function downloadAndExtract(
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url, { headers: FETCH_HEADERS });
+      const response = await fetchWithTimeout(
+        url,
+        { headers: FETCH_HEADERS },
+        ARTICLE_FETCH_TIMEOUT_MS,
+      );
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
@@ -135,12 +147,16 @@ async function fetchViaJina(url: string): Promise<string> {
   const key = config.jinaApiKey;
   if (!key) throw new Error("JINA_API_KEY not configured");
 
-  const response = await fetch(`https://r.jina.ai/${url}`, {
-    headers: new Headers({
-      "Authorization": `Bearer ${key}`,
-      "Accept": "text/plain",
-    }),
-  });
+  const response = await fetchWithTimeout(
+    `https://r.jina.ai/${url}`,
+    {
+      headers: new Headers({
+        "Authorization": `Bearer ${key}`,
+        "Accept": "text/plain",
+      }),
+    },
+    JINA_FETCH_TIMEOUT_MS,
+  );
   if (!response.ok) {
     throw new Error(`Jina HTTP ${response.status} ${response.statusText}`);
   }
@@ -191,7 +207,7 @@ function formatComments(comments: Comment[]): string {
 }
 
 // Extended schema with downloaded article text and community comments
-export const StoryWithTextSchema = StorySchema.extend({
+export const StoryWithTextSchema = StoryWithUrlSchema.extend({
   text: z.string(),
   commentsText: z.string().default(""),
 });
@@ -199,101 +215,155 @@ export const StoryWithTextSchema = StorySchema.extend({
 export type StoryWithText = z.infer<typeof StoryWithTextSchema>;
 
 /**
- * Step 3: Download webpage content for each story
+ * Download article text and community comments for a single story.
+ * Extracted so the backfill path can reuse the exact same logic.
+ */
+async function downloadStoryContent(
+  story: StoryWithUrl,
+  commentCount: number,
+  commentCounts: Map<number, number>,
+): Promise<StoryWithText> {
+  let text = "";
+  try {
+    text = await fetchArticleText(story.url);
+    logger.debug`Downloaded: ${story.title}`;
+  } catch (error) {
+    logger
+      .warn`Failed to download ${story.title}: ${summarizeError(error)}`;
+    logger.debug`Full error for ${story.title}: ${error}`;
+  }
+
+  let commentsText = "";
+  // Only fetch comments when the article downloaded — stories with empty
+  // text are dropped by keepSuccessfulDownloads, so their comments would
+  // be wasted API calls.
+  if (
+    text.trim().length > 0 && commentCount > 0 && story.kids &&
+    story.kids.length > 0
+  ) {
+    try {
+      const comments = await fetchComments(story.kids, commentCount);
+      commentsText = formatComments(comments);
+      commentCounts.set(story.id, comments.length);
+      logger
+        .debug`Fetched ${comments.length} comments for ${story.title}`;
+    } catch (error) {
+      logger.warn`Failed to fetch comments for ${story.title}: ${
+        summarizeError(error)
+      }`;
+      logger.debug`Full error for ${story.title}: ${error}`;
+    }
+  }
+
+  return { ...story, text, commentsText };
+}
+
+/**
+ * Step 3: Download webpage content for each story.
+ * Drops failed downloads and trims to `storyCount` before handoff to summaries.
+ * If the initial candidate pool yields too few successes, backfills from the
+ * remaining HN IDs so the episode stays close to the configured size.
  */
 export const downloadContentStep = createStep({
   id: "download-content",
   inputSchema: z.object({
-    stories: z.array(StorySchema),
+    stories: z.array(StoryWithUrlSchema),
+    storyCount: z.number(),
+    storyIds: z.array(z.number()),
   }),
   outputSchema: z.object({
     storiesWithText: z.array(StoryWithTextSchema),
   }),
   execute: async ({ inputData }) => {
-    logger.info`Downloading content for ${inputData.stories.length} stories`;
+    logger
+      .info`Downloading content for ${inputData.stories.length} candidate stories`;
     const commentCount = config.commentCount;
-    let totalComments = 0;
-    let storiesWithComments = 0;
-    const storiesWithText = await Promise.all(
-      inputData.stories.map(async (story) => {
-        // Download the linked article
-        let text = "";
-        try {
-          const url = story.url!;
-          text = await fetchArticleText(url);
-          logger.debug`Downloaded: ${story.title}`;
-        } catch (error) {
-          logger
-            .warn`Failed to download ${story.title}: ${summarizeError(error)}`;
-          logger.debug`Full error for ${story.title}: ${error}`;
-        }
+    const commentCounts = new Map<number, number>();
 
-        // Fetch top comments for additional community context
-        let commentsText = "";
-        if (commentCount > 0 && story.kids && story.kids.length > 0) {
-          try {
-            const comments = await fetchComments(story.kids, commentCount);
-            commentsText = formatComments(comments);
-            totalComments += comments.length;
-            if (comments.length > 0) storiesWithComments++;
-            logger
-              .debug`Fetched ${comments.length} comments for ${story.title}`;
-          } catch (error) {
-            logger.warn`Failed to fetch comments for ${story.title}: ${
-              summarizeError(error)
-            }`;
-            logger.debug`Full error for ${story.title}: ${error}`;
-          }
-        }
-
-        return { ...story, text, commentsText };
-      }),
+    const downloaded = await Promise.all(
+      inputData.stories.map((story) =>
+        downloadStoryContent(story, commentCount, commentCounts)
+      ),
     );
 
-    const successCount = storiesWithText.filter((s) => s.text.length > 0)
-      .length;
-    logger
-      .info`Downloaded ${successCount}/${inputData.stories.length} stories successfully`;
-    if (commentCount > 0) {
-      logger
-        .info`Fetched ${totalComments} comments across ${storiesWithComments} stories`;
+    let { kept: storiesWithText, dropped } = keepSuccessfulDownloads(
+      downloaded,
+      inputData.storyCount,
+    );
+
+    // Backfill from remaining IDs when too many candidates failed to download.
+    // Request budget: worst case walks the remaining ~500 IDs in batches of
+    // 10 plus one article download per URL story found. The walk is bounded
+    // by the MAX_CONSECUTIVE_NULLS circuit breaker in selectStoriesWithUrls,
+    // which stops after ~30 consecutive HN failures (~30s).
+    if (storiesWithText.length < inputData.storyCount) {
+      const processedIds = new Set(inputData.stories.map((s) => s.id));
+      const remainingIds = inputData.storyIds.filter((id) =>
+        !processedIds.has(id)
+      );
+      const deficit = inputData.storyCount - storiesWithText.length;
+
+      if (remainingIds.length > 0 && deficit > 0) {
+        logger
+          .info`Backfilling: need ${deficit} more stories, trying ${remainingIds.length} remaining IDs`;
+        const moreCandidates = await selectStoriesWithUrls(
+          remainingIds,
+          deficit,
+        );
+
+        if (moreCandidates.length > 0) {
+          const moreDownloaded = await Promise.all(
+            moreCandidates.map((story) =>
+              downloadStoryContent(story, commentCount, commentCounts)
+            ),
+          );
+          const { kept: moreKept, dropped: moreDropped } =
+            keepSuccessfulDownloads(
+              moreDownloaded,
+              inputData.storyCount - storiesWithText.length,
+            );
+          if (moreKept.length > 0) {
+            logger
+              .info`Backfill recovered ${moreKept.length} additional stories`;
+          }
+          storiesWithText = [...storiesWithText, ...moreKept];
+          dropped = [...dropped, ...moreDropped];
+        }
+      }
     }
+
+    // Fail early — no point generating a script with zero stories.
+    if (storiesWithText.length === 0) {
+      throw new Error(
+        "No stories have downloadable content after trying all candidates. Check network connectivity and retry.",
+      );
+    }
+
+    for (const story of dropped) {
+      logger
+        .warn`Dropping story with no content (will not appear in script): ${story.title}`;
+    }
+
+    if (storiesWithText.length < inputData.storyCount) {
+      logger
+        .warn`Only ${storiesWithText.length}/${inputData.storyCount} stories have downloadable content after filtering and backfill`;
+    } else {
+      logger
+        .info`Keeping ${storiesWithText.length}/${inputData.storyCount} stories with content (${dropped.length} download failures dropped)`;
+    }
+
+    if (commentCount > 0) {
+      const commentsOnKept = storiesWithText.filter(
+        (s) => s.commentsText.length > 0,
+      ).length;
+      const totalKeptComments = storiesWithText.reduce(
+        (sum, s) => sum + (commentCounts.get(s.id) ?? 0),
+        0,
+      );
+      logger
+        .info`Fetched comments for ${commentsOnKept} of ${storiesWithText.length} kept stories (${totalKeptComments} total comments)`;
+    }
+
     return { storiesWithText };
   },
 });
-
-/**
- * Helper: Format story content for summarization
- */
-export function formatStoryContent(
-  story: StoryWithText,
-  summary: string,
-): string {
-  const formatDate = (unixTimestamp: number): string => {
-    const date = new Date(unixTimestamp * 1000);
-    return date.toLocaleString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZoneName: "short",
-    });
-  };
-
-  return `
-## ${story.title}
-Posted Date: ${formatDate(story.time)}
-URL: ${story.url}
-
-### Story Text
-${story.text}
-
-### Hacker News Community Discussion
-${story.commentsText || "(no comments fetched)"}
-
-### Summary and Talking Points
-${summary}
-  `.trim();
-}

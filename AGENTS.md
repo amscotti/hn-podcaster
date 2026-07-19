@@ -6,8 +6,8 @@ repo-specific facts are included.
 ## Toolchain
 
 - **Deno project, not Node.** There is no `package.json`; dependencies are
-  `jsr:` / `npm:` specifiers mapped in `deno.json`. Pin is Deno 2.8.3
-  (`mise.toml`); run `mise install` or use any Deno 2.8+.
+  `jsr:` / `npm:` specifiers mapped in `deno.json`. Pin is Deno 2.9.1
+  (`mise.toml`); run `mise install` or use any Deno 2.9+.
 - `deno.json` grants broad `net`/`write`/`read`/`env` permissions, so no
   `--allow-*` flag juggling is needed when running.
 
@@ -26,19 +26,22 @@ deno task test    # deno test
   local `check` + `test` tasks are the real gate.
 - Run a single test with `deno test --filter "fetchTopStories"` or pass a path:
   `deno test src/__tests__/hackernews.test.ts`.
-- Tests stub `globalThis.fetch` by hand; `@std/testing/mock` is imported but not
-  used in the existing suite.
+- Tests stub `globalThis.fetch` by hand; no mock library is used.
 
 ## Runtime gotchas
 
 - **A valid `.env` is required to run `app.ts`** (or anything importing
   `src/lib/config.ts`). `config.ts` loads and validates at module initialization
-  and throws immediately if no AI provider API key is present. The existing test
-  file deliberately imports only `lib/hackernews.ts`, so `deno task test` runs
-  without `.env` — but any new test that imports config/providers will need one.
-- **The README is stale re: voice provider.** It says OpenAI TTS is the default;
-  the code defaults to **xAI** (`src/lib/config.ts`). Trust the code, not the
-  README, on defaults. `VOICE_PROVIDER=openai` or `SKIP_AUDIO=true` override it.
+  and throws immediately if no AI provider API key is present. The existing
+  tests deliberately import only config-free modules (`lib/hackernews.ts`,
+  `lib/http.ts`, `lib/format-story.ts`), so `deno task test` runs without `.env`
+  — but any new test that imports config/providers will need one.
+- Voice defaults to **xAI** (`src/lib/config.ts`). `VOICE_PROVIDER=openai` or
+  `SKIP_AUDIO=true` override it. `LOG_LEVEL` controls LogTape verbosity.
+- **Zero downloadable stories is a hard failure.** `download-content` throws
+  when no candidates yield content (e.g. total article-fetch outage), so
+  `deno task start` exits non-zero instead of writing an empty episode. Wrap
+  scheduled runs accordingly.
 - `app.ts` ends with an explicit `Deno.exit(0)` because Mastra's streaming
   machinery and the AI HTTP clients keep the event loop alive. Do not remove it.
 

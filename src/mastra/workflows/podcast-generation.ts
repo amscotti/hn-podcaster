@@ -36,18 +36,22 @@ const generateSummariesStep = createStep({
     storiesWithText: z.array(StoryWithTextSchema),
   }),
   execute: async ({ inputData }) => {
-    logger
-      .info`Generating summaries for ${inputData.storiesWithText.length} stories`;
+    // Failed downloads are already dropped in download-content; this is a
+    // safety net so empty bodies never produce placeholder summaries.
+    const stories = inputData.storiesWithText.filter(
+      (s) => s.text.trim().length > 0,
+    );
+    if (stories.length < inputData.storiesWithText.length) {
+      logger
+        .warn`Filtered ${
+        inputData.storiesWithText.length - stories.length
+      } empty-content stories before summarization`;
+    }
+
+    logger.info`Generating summaries for ${stories.length} stories`;
 
     const summaries = await Promise.all(
-      inputData.storiesWithText.map(async (story, index) => {
-        if (!story.text) {
-          logger.warn`Story ${
-            index + 1
-          } has no content, skipping summarization`;
-          return formatStoryContent(story, "Content could not be fetched");
-        }
-
+      stories.map(async (story, index) => {
         const communityContext = story.commentsText
           ? `\n\n## Hacker News Community Discussion\nTop comments from the Hacker News thread. These show how real practitioners and readers are reacting to this story - their opinions, pushback, personal experiences, counterarguments, and things they spotted that the article missed. Actively weave the most interesting community perspectives into your talking points: what did readers think? Did they agree or push back? Did someone share a relevant real-world experience or a sharp counterpoint? Call out representative views and name that they come from the discussion, e.g. "readers pointed out...", "commenters were skeptical because...". Don't just summarize the comments in bulk - integrate the standout voices and opinions as part of the story.\n${story.commentsText}`
           : "";
@@ -69,7 +73,7 @@ ${story.text}${communityContext}`;
     logger.info`Generated ${summaries.length} summaries`;
     return {
       summaries,
-      storiesWithText: inputData.storiesWithText,
+      storiesWithText: stories,
     };
   },
 });
@@ -89,6 +93,15 @@ const generateScriptStep = createStep({
     iterationCount: z.number(),
   }),
   execute: async ({ inputData }) => {
+    // download-content already throws on zero stories; this guard keeps the
+    // step safe in isolation (a zero-length summaries array would divide by
+    // zero below and produce a nonsense prompt).
+    if (inputData.summaries.length === 0) {
+      throw new Error(
+        "Cannot generate script: no story summaries available",
+      );
+    }
+
     logger.info`Generating initial podcast script`;
 
     // Natural spoken date (e.g. "Friday, June 19th") - no time/timezone/year,
@@ -176,6 +189,19 @@ const improveScriptOnceStep = createStep({
     shouldContinue: z.boolean(),
   }),
   execute: async ({ inputData }) => {
+    // Skip when iterations is 0, or if we already hit the configured cap
+    // (covers do-while always running the step once before the condition).
+    if (inputData.iterationCount >= config.improvementIterations) {
+      logger
+        .info`Skipping script improvement (IMPROVEMENT_ITERATIONS=${config.improvementIterations})`;
+      return {
+        script: inputData.script,
+        summaries: inputData.summaries,
+        iterationCount: inputData.iterationCount,
+        shouldContinue: false,
+      };
+    }
+
     const iteration = inputData.iterationCount + 1;
     logger
       .info`Improving script (iteration ${iteration}/${config.improvementIterations})`;
