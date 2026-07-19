@@ -55,6 +55,10 @@ export function getAgentModelConfig(type: "summary" | "main"): {
  * bundles its own copy of `@mastra/core` (private fields make the types
  * structurally incompatible across packages). Both OpenAIVoice and our XaiVoice
  * satisfy this minimal interface.
+ *
+ * The return type is deliberately `AsyncIterable<unknown>` — both providers
+ * return a byte stream in practice, and keeping it minimal avoids picking a
+ * side between Deno's web `ReadableStream` and Mastra's bundled type.
  */
 export interface VoiceLike {
   speak(

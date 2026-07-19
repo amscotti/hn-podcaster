@@ -286,6 +286,10 @@ export const downloadContentStep = createStep({
     );
 
     // Backfill from remaining IDs when too many candidates failed to download.
+    // Request budget: worst case walks the remaining ~500 IDs in batches of
+    // 10 plus one article download per URL story found. The walk is bounded
+    // by the MAX_CONSECUTIVE_NULLS circuit breaker in selectStoriesWithUrls,
+    // which stops after ~30 consecutive HN failures (~30s).
     if (storiesWithText.length < inputData.storyCount) {
       const processedIds = new Set(inputData.stories.map((s) => s.id));
       const remainingIds = inputData.storyIds.filter((id) =>

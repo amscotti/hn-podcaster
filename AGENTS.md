@@ -38,6 +38,10 @@ deno task test    # deno test
   — but any new test that imports config/providers will need one.
 - Voice defaults to **xAI** (`src/lib/config.ts`). `VOICE_PROVIDER=openai` or
   `SKIP_AUDIO=true` override it. `LOG_LEVEL` controls LogTape verbosity.
+- **Zero downloadable stories is a hard failure.** `download-content` throws
+  when no candidates yield content (e.g. total article-fetch outage), so
+  `deno task start` exits non-zero instead of writing an empty episode. Wrap
+  scheduled runs accordingly.
 - `app.ts` ends with an explicit `Deno.exit(0)` because Mastra's streaming
   machinery and the AI HTTP clients keep the event loop alive. Do not remove it.
 
