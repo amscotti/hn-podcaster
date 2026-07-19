@@ -234,7 +234,13 @@ async function downloadStoryContent(
   }
 
   let commentsText = "";
-  if (commentCount > 0 && story.kids && story.kids.length > 0) {
+  // Only fetch comments when the article downloaded — stories with empty
+  // text are dropped by keepSuccessfulDownloads, so their comments would
+  // be wasted API calls.
+  if (
+    text.trim().length > 0 && commentCount > 0 && story.kids &&
+    story.kids.length > 0
+  ) {
     try {
       const comments = await fetchComments(story.kids, commentCount);
       commentsText = formatComments(comments);
@@ -306,9 +312,6 @@ export const downloadContentStep = createStep({
         );
 
         if (moreCandidates.length > 0) {
-          // Avoid fetching comments for backfill candidates that won't make
-          // the cut — but we don't know which will succeed, so fetch for all
-          // and let the filter decide.
           const moreDownloaded = await Promise.all(
             moreCandidates.map((story) =>
               downloadStoryContent(story, commentCount, commentCounts)
