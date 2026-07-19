@@ -93,6 +93,15 @@ const generateScriptStep = createStep({
     iterationCount: z.number(),
   }),
   execute: async ({ inputData }) => {
+    // download-content already throws on zero stories; this guard keeps the
+    // step safe in isolation (a zero-length summaries array would divide by
+    // zero below and produce a nonsense prompt).
+    if (inputData.summaries.length === 0) {
+      throw new Error(
+        "Cannot generate script: no story summaries available",
+      );
+    }
+
     logger.info`Generating initial podcast script`;
 
     // Natural spoken date (e.g. "Friday, June 19th") - no time/timezone/year,

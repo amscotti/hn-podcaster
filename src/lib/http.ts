@@ -15,12 +15,15 @@ export const JINA_FETCH_TIMEOUT_MS = 45_000;
 export const TTS_FETCH_TIMEOUT_MS = 120_000;
 
 /**
- * `fetch` with an AbortController timeout that covers **both** header
- * retrieval and response-body consumption.
+ * `fetch` with an AbortController timeout that covers the **entire request
+ * lifecycle** — headers and body combined, not a separate per-phase budget.
+ * A slow header response eats into the body budget by design.
  *
  * The timer stays active after headers arrive so a server that sends headers
  * and then stalls the body is still aborted. The body is wrapped in a
  * reader-based stream that clears the timer on completion, error, or cancel.
+ * Callers must drain (or cancel) the body — discarding an unconsumed
+ * response leaves the timer pending until it fires.
  *
  * If `init.signal` is provided, it is composed with the timeout signal via
  * `AbortSignal.any` — caller cancellation and the timeout both apply. A

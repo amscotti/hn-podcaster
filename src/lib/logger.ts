@@ -17,10 +17,17 @@ const LOG_LEVELS = [
 
 /**
  * Resolve LOG_LEVEL from the environment. Invalid values fall back to "info"
- * so a typo never silences all logging or crashes startup.
+ * so a typo never silences all logging or crashes startup. Also falls back
+ * when env access itself is denied (e.g. tests running without --allow-env),
+ * so importing this module never crashes a caller.
  */
 function resolveLogLevel(): LogLevel {
-  const raw = Deno.env.get("LOG_LEVEL")?.toLowerCase().trim();
+  let raw: string | undefined;
+  try {
+    raw = Deno.env.get("LOG_LEVEL")?.toLowerCase().trim();
+  } catch {
+    return "info";
+  }
   if (raw && (LOG_LEVELS as readonly string[]).includes(raw)) {
     return raw as LogLevel;
   }

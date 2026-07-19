@@ -1,5 +1,8 @@
 import { z } from "@zod/zod";
 import { fetchWithTimeout, HN_FETCH_TIMEOUT_MS } from "./http.ts";
+import { getAppLogger } from "./logger.ts";
+
+const logger = getAppLogger("hackernews");
 
 const STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json";
 const ITEM_URL_BASE = "https://hacker-news.firebaseio.com/v0/item";
@@ -87,15 +90,22 @@ export async function fetchStory(id: number): Promise<Story | null> {
       HN_FETCH_TIMEOUT_MS,
     );
     if (!storyResponse.ok) {
+      logger
+        .debug`fetchStory(${id}): HTTP ${storyResponse.status} ${storyResponse.statusText}`;
       return null;
     }
     const data: unknown = await storyResponse.json();
     if (data === null || typeof data !== "object") {
+      logger.debug`fetchStory(${id}): missing or non-object item`;
       return null;
     }
     const parsed = StorySchema.safeParse(data);
+    if (!parsed.success) {
+      logger.debug`fetchStory(${id}): schema mismatch`;
+    }
     return parsed.success ? parsed.data : null;
-  } catch {
+  } catch (error) {
+    logger.debug`fetchStory(${id}): request failed: ${error}`;
     return null;
   }
 }

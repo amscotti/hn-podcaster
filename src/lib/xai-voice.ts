@@ -74,9 +74,18 @@ export class XaiVoice extends MastraVoice<
   /**
    * Convert text to speech via xAI's TTS API.
    * Returns the raw audio byte stream (MP3 by default).
+   *
+   * The input is typed per the VoiceLike contract (string). The return type
+   * stays `any` because the MastraVoice base class types its stream as
+   * Node's `ReadableStream` (readable/read/setEncoding/...), which is
+   * structurally incompatible with the web ReadableStream we return — the
+   * same conflict the structural VoiceLike interface exists to avoid.
    */
-  // deno-lint-ignore no-explicit-any
-  async speak(input: any, options?: XaiSpeakOptions): Promise<any> {
+  async speak(
+    input: string,
+    options?: XaiSpeakOptions,
+    // deno-lint-ignore no-explicit-any
+  ): Promise<any> {
     const text = await readInputStream(input);
     if (!text.trim()) {
       throw new Error("Cannot synthesize empty text");
