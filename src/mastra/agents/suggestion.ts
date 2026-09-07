@@ -20,6 +20,8 @@ export const SUGGESTION_CATEGORIES = [
   "missing-intro-overview",
   "length",
   "delivery",
+  "flat-delivery",
+  "cohesion",
   "other",
 ] as const;
 
@@ -91,6 +93,10 @@ Read the script critically and look for:
 11. Length (length) - Is the script significantly shorter or longer than the target word count given in the prompt? If it's too short, suggest where to add depth (more examples, explanation, or community reactions) - never pad with filler. If too long, suggest where to trim repetition or tangents. Only flag when the word count is noticeably off (more than ~15% away from target).
 
 12. Delivery (delivery) - If delivery tags are in use, flag spots where a pause/whisper/emphasis tag would sound more natural, or where tags are overused/awkward. Only applies when the prompt mentions delivery tags.
+
+13. Flat delivery (flat-delivery) - Does any section read like a narrated article instead of a person talking? Flag passages with: three or more consecutive sentences that just deliver facts with no host reaction, question, or aside; a whole story with no first-person ("I", "here's what got me"), no opinion, and no rhetorical question; transitions that pivot without personality. Quote the flat passage exactly.
+
+14. Cohesion break (cohesion) - Does the episode flow as one monologue? Flag: a question that is never answered or explored before the topic changes; a paragraph that could be moved anywhere without effect (disconnected filler); a transition that pivots without carrying any idea forward; an intro tease that never pays off or an outro that could end any episode. Quote the exact spot where the thread drops.
 
 For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. Set improvementsNeeded to false ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
   model: getAgentModelConfig("summary"),

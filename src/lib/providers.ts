@@ -12,7 +12,7 @@ const AI_PROVIDER_MODELS: Record<
   AIProvider,
   { summary: string; main: string }
 > = {
-  xai: { summary: "grok-4.5", main: "grok-4.5" },
+  xai: { summary: "grok-4.6", main: "grok-4.6" },
   openai: { summary: "gpt-5-mini", main: "gpt-5.2" },
   anthropic: { summary: "claude-haiku-4-5", main: "claude-sonnet-4-5" },
   google: { summary: "gemini-3-flash-preview", main: "gemini-3-pro-preview" },
