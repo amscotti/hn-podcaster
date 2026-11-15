@@ -1,4 +1,4 @@
-import { z } from "@zod/zod";
+import { z } from "zod";
 
 // Voice provider definitions
 export const VOICE_PROVIDER_IDS = ["openai", "xai"] as const;
@@ -35,27 +35,34 @@ const ConfigSchema = z.object({
     .number()
     .int()
     .positive()
-    .default(10)
-    .describe("Number of HN stories to include"),
+    .max(50)
+    .default(7)
+    .describe("Number of HN stories to include (max 50)"),
   improvementIterations: z
     .number()
     .int()
     .min(0)
+    .max(10)
     .default(5)
-    .describe("Number of script improvement iterations"),
+    .describe("Number of script improvement iterations (max 10)"),
   commentCount: z
     .number()
     .int()
     .min(0)
     .max(50)
     .default(25)
-    .describe("Number of top HN comments to fetch per story (0 disables)"),
+    .describe(
+      "Number of top HN comments to fetch per story (0 disables, max 50)",
+    ),
   targetDurationMinutes: z
     .number()
     .int()
     .min(1)
-    .default(10)
-    .describe("Target podcast length in minutes (drives script word count)"),
+    .max(120)
+    .default(12)
+    .describe(
+      "Target podcast length in minutes (max 120; drives script word count)",
+    ),
   outputDir: z
     .string()
     .min(1)
@@ -67,19 +74,25 @@ const ConfigSchema = z.object({
     .describe("Skip audio generation (transcript only)"),
 
   // Voice / TTS settings
-  voiceProvider: VoiceProviderSchema
-    .default("xai")
-    .describe("TTS provider for audio generation"),
+  voiceProvider: VoiceProviderSchema.default("xai").describe(
+    "TTS provider for audio generation",
+  ),
   xaiVoiceId: z
     .string()
     .min(1)
-    .default("ara")
-    .describe("xAI voice id (eve, ara, rex, sal, leo, or custom)"),
+    .default("eve")
+    .describe("xAI voice id (any built-in voice, e.g. eve/ara/rex, or custom)"),
   xaiVoiceLanguage: z
     .string()
     .min(1)
     .default("en")
     .describe("BCP-47 language code for xAI TTS (e.g. en, or auto)"),
+  xaiVoiceSpeed: z
+    .number()
+    .min(0.7)
+    .max(1.5)
+    .default(0.9)
+    .describe("xAI TTS speed multiplier (0.7-1.5; 0.9 measured calmer)"),
 
   // Content fetching settings
   jinaApiKey: z
@@ -93,29 +106,50 @@ const ConfigSchema = z.object({
 export type Config = z.infer<typeof ConfigSchema>;
 
 /**
- * Parse an environment variable as an integer, returning undefined if not set or invalid
+ * Parse an environment variable as an integer, returning undefined if unset.
+ * Present-but-invalid values throw with the variable name and bad value so a
+ * typo'd knob is never silently ignored.
  */
-function parseIntEnv(name: string): number | undefined {
-  const value = Deno.env.get(name);
+export function parseIntEnv(name: string): number | undefined {
+  const value = Bun.env[name];
   if (value === undefined) return undefined;
-  const parsed = parseInt(value, 10);
-  return Number.isNaN(parsed) ? undefined : parsed;
+  const trimmed = value.trim();
+  const parsed = Number(trimmed);
+  if (trimmed === "" || !Number.isInteger(parsed)) {
+    throw new Error(`Invalid ${name}: "${value}" (expected an integer)`);
+  }
+  return parsed;
+}
+
+/**
+ * Parse an environment variable as a float, returning undefined if unset.
+ * Present-but-invalid values throw with the variable name and bad value.
+ */
+export function parseFloatEnv(name: string): number | undefined {
+  const value = Bun.env[name];
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  const parsed = Number(trimmed);
+  if (trimmed === "" || !Number.isFinite(parsed)) {
+    throw new Error(`Invalid ${name}: "${value}" (expected a number)`);
+  }
+  return parsed;
 }
 
 /**
  * Detect AI provider from environment.
  * Uses explicit AI_PROVIDER if set, otherwise auto-detects from available API keys.
  */
-function detectAIProvider(apiKeys: Config["apiKeys"]): AIProvider {
-  const explicit = Deno.env.get("AI_PROVIDER");
+export function detectAIProvider(apiKeys: Config["apiKeys"]): AIProvider {
+  const explicit = Bun.env.AI_PROVIDER;
 
   if (explicit !== undefined) {
     const result = AIProviderSchema.safeParse(explicit);
     if (!result.success) {
       throw new Error(
-        `Invalid AI_PROVIDER: "${explicit}". Must be one of: ${
-          AI_PROVIDER_IDS.join(", ")
-        }`,
+        `Invalid AI_PROVIDER: "${explicit}". Must be one of: ${AI_PROVIDER_IDS.join(
+          ", ",
+        )}`,
       );
     }
     return result.data;
@@ -145,28 +179,28 @@ const PROVIDER_ENV_KEYS: Record<AIProvider, string> = {
  * Load and validate configuration from environment variables.
  * Throws if configuration is invalid.
  */
-function loadConfig(): Config {
+export function loadConfig(): Config {
   // Load API keys
   const apiKeys = {
-    xai: Deno.env.get("XAI_API_KEY"),
-    openai: Deno.env.get("OPENAI_API_KEY"),
-    anthropic: Deno.env.get("ANTHROPIC_API_KEY"),
-    google: Deno.env.get("GOOGLE_GENERATIVE_AI_API_KEY"),
+    xai: Bun.env.XAI_API_KEY,
+    openai: Bun.env.OPENAI_API_KEY,
+    anthropic: Bun.env.ANTHROPIC_API_KEY,
+    google: Bun.env.GOOGLE_GENERATIVE_AI_API_KEY,
   };
 
   // Check if audio generation is being skipped
-  const skipAudio = Deno.env.get("SKIP_AUDIO")?.toLowerCase() === "true";
+  const skipAudio = Bun.env.SKIP_AUDIO?.toLowerCase() === "true";
 
   // Resolve voice provider (validates VOICE_PROVIDER if set; defaults to xai)
   const voiceProvider = (() => {
-    const explicit = Deno.env.get("VOICE_PROVIDER");
+    const explicit = Bun.env.VOICE_PROVIDER;
     if (explicit === undefined) return "xai" as const;
     const result = VoiceProviderSchema.safeParse(explicit);
     if (!result.success) {
       throw new Error(
-        `Invalid VOICE_PROVIDER: "${explicit}". Must be one of: ${
-          VOICE_PROVIDER_IDS.join(", ")
-        }`,
+        `Invalid VOICE_PROVIDER: "${explicit}". Must be one of: ${VOICE_PROVIDER_IDS.join(
+          ", ",
+        )}`,
       );
     }
     return result.data;
@@ -205,12 +239,13 @@ function loadConfig(): Config {
     improvementIterations: parseIntEnv("IMPROVEMENT_ITERATIONS"),
     commentCount: parseIntEnv("COMMENT_COUNT"),
     targetDurationMinutes: parseIntEnv("TARGET_DURATION_MINUTES"),
-    outputDir: Deno.env.get("OUTPUT_DIR"),
+    outputDir: Bun.env.OUTPUT_DIR,
     skipAudio,
     voiceProvider,
-    xaiVoiceId: Deno.env.get("XAI_VOICE_ID"),
-    xaiVoiceLanguage: Deno.env.get("XAI_VOICE_LANGUAGE"),
-    jinaApiKey: Deno.env.get("JINA_API_KEY"),
+    xaiVoiceId: Bun.env.XAI_VOICE_ID,
+    xaiVoiceLanguage: Bun.env.XAI_VOICE_LANGUAGE,
+    xaiVoiceSpeed: parseFloatEnv("XAI_VOICE_SPEED"),
+    jinaApiKey: Bun.env.JINA_API_KEY,
   };
 
   // Remove undefined values so Zod defaults apply

@@ -5,13 +5,14 @@ import { podcastWorkflow } from "./src/mastra/index.ts";
 const logger = getAppLogger("app");
 
 /** Human-readable labels for the workflow step ids emitted in stream events. */
-const STEP_LABELS: Record<string, string> = {
+export const STEP_LABELS: Record<string, string> = {
   "fetch-top-stories": "Fetching top stories",
   "fetch-stories-metadata": "Fetching story metadata",
   "download-content": "Downloading article content",
   "generate-summaries": "Generating summaries",
   "generate-script": "Writing podcast script",
   "improve-script-once": "Improving script",
+  "direct-performance": "Directing voice performance",
   "generate-audio": "Generating audio",
 };
 
@@ -20,11 +21,13 @@ const STEP_LABELS: Record<string, string> = {
  * Streaming the run gives real-time visibility into each step as it happens,
  * rather than waiting silently for the whole pipeline to finish.
  */
-function logStreamEvent(
-  event: { type?: string; id?: string; payload?: Record<string, unknown> },
-): void {
+export function logStreamEvent(event: {
+  type?: string;
+  id?: string;
+  payload?: Record<string, unknown>;
+}): void {
   const stepId = event.id ?? (event.payload?.id as string | undefined);
-  const label = (stepId && STEP_LABELS[stepId]) ? STEP_LABELS[stepId] : stepId;
+  const label = stepId && STEP_LABELS[stepId] ? STEP_LABELS[stepId] : stepId;
 
   switch (event.type) {
     case "workflow-start":
@@ -40,9 +43,9 @@ function logStreamEvent(
       if (label) logger.info`⏸ ${label} suspended`;
       break;
     case "workflow-finish":
-      logger.info`Workflow finished (${
-        String(event.payload?.workflowStatus ?? "unknown")
-      })`;
+      logger.info`Workflow finished (${String(
+        event.payload?.workflowStatus ?? "unknown",
+      )})`;
       break;
     case "workflow-canceled":
       logger.warn`Workflow canceled`;
@@ -50,33 +53,66 @@ function logStreamEvent(
   }
 }
 
-async function main(): Promise<void> {
+/** Minimal workflow-result shape `main()` needs to report and exit. */
+export interface WorkflowOutcome {
+  status: string;
+  result?: {
+    transcriptPath: string;
+    audioPath: string;
+    generatedAt: string;
+  };
+}
+
+/** Map a workflow status to the process exit code. */
+export function resolveExitCode(status: string): number {
+  return status === "success" ? 0 : 1;
+}
+
+/**
+ * Run the podcast workflow and return the process exit code: 0 on success,
+ * 1 on a non-success workflow result or thrown error. Returning the code
+ * (instead of always exiting 0) keeps schedulers/CI honest on failure.
+ *
+ * `runWorkflow` is injectable so tests can exercise the exit-code and
+ * output paths without running the real pipeline.
+ */
+export async function main(
+  runWorkflow?: () => Promise<WorkflowOutcome>,
+): Promise<number> {
   logger.info`Generating podcast...`;
 
   try {
-    const run = await podcastWorkflow.createRun();
+    let result: WorkflowOutcome;
+    if (runWorkflow) {
+      result = await runWorkflow();
+    } else {
+      const run = await podcastWorkflow.createRun();
 
-    // Stream the run for live progress, then await the final result.
-    const runOutput = await run.stream({
-      inputData: {
-        storyCount: config.storyCount,
-      },
-    });
+      // Stream the run for live progress, then await the final result.
+      const runOutput = await run.stream({
+        inputData: {
+          storyCount: config.storyCount,
+        },
+      });
 
-    for await (const event of runOutput.fullStream) {
-      logStreamEvent(event);
+      for await (const event of runOutput.fullStream) {
+        logStreamEvent(event);
+      }
+
+      result = (await runOutput.result) as WorkflowOutcome;
     }
 
-    const result = await runOutput.result;
-
-    if (result.status === "success") {
+    if (result.status === "success" && result.result) {
       console.log("\n✅ Podcast generation complete!");
       console.log(`📄 Transcript: ${result.result.transcriptPath}`);
-      console.log(`🎙️  Audio: ${result.result.audioPath}`);
+      if (result.result.audioPath) {
+        console.log(`🎙️  Audio: ${result.result.audioPath}`);
+      }
     } else {
       console.error("\n❌ Podcast generation failed");
       console.error(result);
     }
+    return resolveExitCode(result.status);
   } catch (error) {
     logger.error`Error generating podcast: ${error}`;
     throw error;
@@ -88,9 +124,9 @@ if (import.meta.main) {
   // sinks keep the event loop alive after the work is done. This is a one-shot
   // CLI, so exit explicitly once main() resolves.
   main()
-    .then(() => Deno.exit(0))
+    .then((code) => process.exit(code))
     .catch((error) => {
       console.error(error);
-      Deno.exit(1);
+      process.exit(1);
     });
 }
