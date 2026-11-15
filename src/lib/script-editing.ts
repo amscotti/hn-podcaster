@@ -45,6 +45,14 @@ export const ALLOWED_WRAPPING_TAGS = [
 /** Maximum delivery tags per paragraph (guidance budget: never more than 2). */
 export const MAX_TAGS_PER_PARAGRAPH = 2;
 
+/**
+ * Full wrapping vocabulary for positive matching: permitted tags plus the
+ * guidance-banned singing tags. Matching only this vocabulary keeps quoted
+ * HTML (`<em>`, `<a>`, `<br>`) from article text out of the validator.
+ */
+const WRAPPING_TAG_PATTERN =
+  "<\\/?(whisper|soft|slow|loud|fast|emphasis|build-intensity|decrease-intensity|higher-pitch|lower-pitch|sing-song|singing)>";
+
 /** Split a script into paragraphs on blank lines, dropping empties. */
 export function splitParagraphs(script: string): string[] {
   return script
@@ -198,7 +206,7 @@ export function findInvalidDeliveryTags(
   for (const match of text.matchAll(/\[[a-z][a-z-]*\]/g)) {
     if (!inlineAllowed.has(match[0])) invalid.add(match[0]);
   }
-  for (const match of text.matchAll(/<\/?([a-z][a-z-]*)>/g)) {
+  for (const match of text.matchAll(new RegExp(WRAPPING_TAG_PATTERN, "g"))) {
     if (!wrapAllowed.has(match[1])) invalid.add(match[0]);
   }
   return [...invalid];

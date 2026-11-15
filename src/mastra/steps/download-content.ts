@@ -14,6 +14,7 @@ import {
   fetchWithTimeout,
   JINA_FETCH_TIMEOUT_MS,
 } from "../../lib/http.ts";
+import { mapWithConcurrency } from "../../lib/concurrency.ts";
 import { keepSuccessfulDownloads } from "../../lib/format-story.ts";
 import { config } from "../../lib/config.ts";
 import { getAppLogger } from "../../lib/logger.ts";
@@ -22,29 +23,6 @@ const logger = getAppLogger("steps");
 
 /** Maximum parallel article downloads in flight. */
 export const DOWNLOAD_CONCURRENCY = 5;
-
-/**
- * Run `worker` over `items` with at most `concurrency` in flight,
- * preserving input order. Same bounded-pool pattern as the workflow's
- * `mapWithConcurrency` (duplicated here to avoid a workflow import cycle).
- */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const limit = Math.max(1, Math.min(concurrency, items.length || 1));
-  const runners = Array.from({ length: limit }, async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await worker(items[index], index);
-    }
-  });
-  await Promise.all(runners);
-  return results;
-}
 
 /**
  * Hard ceiling on article/PDF bodies before extraction. A single

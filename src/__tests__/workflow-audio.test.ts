@@ -5,11 +5,11 @@ import {
   buildAudioSegments,
   generateAudioStep,
   generateSummariesStep,
-  mapWithConcurrency,
   PERFORMANCE_WINDOW_CONCURRENCY,
   SUGGESTION_CONCURRENCY,
   SUMMARY_CONCURRENCY,
 } from "../mastra/workflows/podcast-generation.ts";
+import { mapWithConcurrency } from "../lib/concurrency.ts";
 import { DOWNLOAD_CONCURRENCY } from "../mastra/steps/download-content.ts";
 import { XAI_TTS_MAX_CHARS } from "../lib/script-editing.ts";
 

@@ -115,13 +115,25 @@ test("validateEditedScript catches leaked markers and markdown headings", () => 
   expect(headed.valid).toBe(false);
 });
 
-test("findInvalidDeliveryTags flags unknown tags only", () => {
-  const text =
-    "Wait [pause] for it [sigh] and <whisper>this</whisper> <shout>now</shout> [long-pause] [laugh] <emphasis>yes</emphasis>";
-  expect(findInvalidDeliveryTags(text, true)).toEqual(["<shout>", "</shout>"]);
-  // Without xAI tag support, every tag is invalid
-  const all = findInvalidDeliveryTags("Hi [pause] there", false);
-  expect(all).toEqual(["[pause]"]);
+test("findInvalidDeliveryTags flags banned tags, ignores article HTML", () => {
+  // Unknown angle tags (e.g. <shout>) and quoted HTML are article content,
+  // not delivery tags, so they are ignored by the positive vocabulary match.
+  expect(
+    findInvalidDeliveryTags(
+      "Wait [pause] <whisper>this</whisper> <shout>now</shout> [long-pause] [laugh] <emphasis>yes</emphasis>",
+      true,
+    ),
+  ).toEqual([]);
+  expect(
+    findInvalidDeliveryTags("quoted <em>html</em> and <a>links</a> <br>", true),
+  ).toEqual([]);
+  // Banned singing tags are known delivery tags and stay rejected.
+  expect(
+    findInvalidDeliveryTags("sing <singing>la</singing> here", true),
+  ).toEqual(["<singing>", "</singing>"]);
+  // Without xAI tag support, every known tag is invalid
+  const all = findInvalidDeliveryTags("Hi [pause] <soft>x</soft>", false);
+  expect(all).toEqual(["[pause]", "<soft>", "</soft>"]);
 });
 
 test("segmentParagraphsForTts groups complete paragraphs within limits", () => {
@@ -153,10 +165,18 @@ test("validatePerformanceScript enforces length band and tag safety", () => {
 
   const badTag = validatePerformanceScript(
     original,
-    ["one two three four five six seven eight nine <shout>ten</shout>."],
+    ["one two three four five six seven eight nine <singing>ten</singing>."],
     true,
   );
   expect(badTag.valid).toBe(false);
+
+  // Quoted article HTML must not fail performance validation.
+  const htmlOk = validatePerformanceScript(
+    original,
+    ["one two three four five six seven eight nine <em>ten</em>."],
+    true,
+  );
+  expect(htmlOk.valid).toBe(true);
 });
 
 test("countDeliveryTags counts openings and inline tags once", () => {

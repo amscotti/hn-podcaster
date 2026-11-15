@@ -235,10 +235,10 @@ export class XaiVoice extends MastraVoice<unknown, XaiSpeakOptions, never> {
       }
 
       if (response.ok) {
-        if (!response.body) {
-          throw new Error("xAI TTS returned no audio body");
-        }
         try {
+          if (!response.body) {
+            throw new Error("xAI TTS returned no audio body");
+          }
           const bytes = new Uint8Array(await response.arrayBuffer());
           if (bytes.length === 0) {
             throw new Error("xAI TTS returned empty audio body");

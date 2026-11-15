@@ -260,6 +260,29 @@ test("XaiVoice.speak - floors Retry-After 0 at 500ms", async () => {
   }
 });
 
+test("XaiVoice.speak - retries null-body success then succeeds", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  stubFetch(() => {
+    calls++;
+    if (calls === 1) {
+      // Successful status with no body: transient, must retry like a
+      // truncated/aborted body read.
+      return Promise.resolve(new Response(null, { status: 200 }));
+    }
+    return Promise.resolve(new Response("ok-after-null"));
+  });
+  try {
+    const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
+    expect(await readStreamText(await voice.speak("Hello"))).toBe(
+      "ok-after-null",
+    );
+    expect(calls).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("XaiVoice.speak - retries mid-body abort then succeeds", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;

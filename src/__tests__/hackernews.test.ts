@@ -5,6 +5,8 @@ import {
   fetchTopStories,
   isStoryWithUrl,
   selectStoriesWithUrls,
+  StorySchema,
+  StoryWithUrlSchema,
   type Story,
 } from "../lib/hackernews.ts";
 
@@ -370,8 +372,8 @@ test("selectStoriesWithUrls - bails early on systemic outage", async () => {
   }
 });
 
-test("Story type - proper typing", () => {
-  const story: Story = {
+test("Story schema - runtime guard accepts link stories, rejects bad items", () => {
+  const link = {
     id: 123,
     title: "Test Story",
     url: "https://example.com",
@@ -382,14 +384,21 @@ test("Story type - proper typing", () => {
     descendants: 10,
     kids: [124, 125],
   };
-
-  expect(story.id).toBe(123);
-  expect(story.title).toBe("Test Story");
-  expect(story.url).toBe("https://example.com");
-  expect(story.score).toBe(100);
-  expect(story.by).toBe("testuser");
-  expect(story.time).toBe(1234567890);
-  expect(story.type).toBe("story");
-  expect(story.descendants).toBe(10);
-  expect(story.kids).toEqual([124, 125]);
+  expect(StorySchema.safeParse(link).success).toBe(true);
+  expect(StoryWithUrlSchema.safeParse(link).success).toBe(true);
+  // Missing required fields and missing url (for the link schema) fail.
+  expect(StorySchema.safeParse({ id: 1 }).success).toBe(false);
+  expect(
+    StoryWithUrlSchema.safeParse({
+      id: 1,
+      title: "No link",
+      score: 1,
+      by: "u",
+      time: 1,
+      type: "story",
+    }).success,
+  ).toBe(false);
+  // Failed fetch payloads must not pass as stories.
+  expect(StorySchema.safeParse(null).success).toBe(false);
+  expect(StorySchema.safeParse("x").success).toBe(false);
 });
