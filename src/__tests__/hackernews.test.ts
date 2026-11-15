@@ -1,47 +1,52 @@
-import { assertEquals } from "@std/assert";
+import { expect, test } from "bun:test";
 import {
   fetchComments,
   fetchStory,
   fetchTopStories,
   isStoryWithUrl,
   selectStoriesWithUrls,
+  StorySchema,
+  StoryWithUrlSchema,
   type Story,
 } from "../lib/hackernews.ts";
 
-Deno.test("fetchTopStories - valid response", async () => {
+type FetchStub = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
+
+function stubFetch(impl: FetchStub): void {
+  globalThis.fetch = impl as unknown as typeof fetch;
+}
+
+test("fetchTopStories - valid response", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve(new Response(JSON.stringify([123, 456, 789])));
+  stubFetch(() =>
+    Promise.resolve(new Response(JSON.stringify([123, 456, 789]))),
+  );
   try {
     const result = await fetchTopStories();
-    assertEquals(result, [123, 456, 789]);
+    expect(result).toEqual([123, 456, 789]);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("fetchTopStories - non-ok response throws", async () => {
+test("fetchTopStories - non-ok response throws", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve(new Response("nope", { status: 500, statusText: "Error" }));
+  stubFetch(() =>
+    Promise.resolve(new Response("nope", { status: 500, statusText: "Error" })),
+  );
   try {
-    let threw = false;
-    try {
-      await fetchTopStories();
-    } catch (e) {
-      threw = true;
-      assertEquals(
-        e instanceof Error && e.message.includes("Failed to fetch top stories"),
-        true,
-      );
-    }
-    assertEquals(threw, true);
+    const err = await fetchTopStories().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("Failed to fetch top stories");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("fetchStory - valid response", async () => {
+test("fetchStory - valid response", async () => {
   const mockStory: Story = {
     id: 123,
     title: "Test Story",
@@ -55,20 +60,19 @@ Deno.test("fetchStory - valid response", async () => {
   };
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve(new Response(JSON.stringify(mockStory)));
+  stubFetch(() => Promise.resolve(new Response(JSON.stringify(mockStory))));
   try {
     const result = await fetchStory(123);
-    assertEquals(result, mockStory);
-    assertEquals(result?.id, 123);
-    assertEquals(result?.title, "Test Story");
-    assertEquals(result?.type, "story");
+    expect(result).toEqual(mockStory);
+    expect(result?.id).toBe(123);
+    expect(result?.title).toBe("Test Story");
+    expect(result?.type).toBe("story");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("fetchStory - minimal valid response", async () => {
+test("fetchStory - minimal valid response", async () => {
   const minimalStory = {
     id: 123,
     title: "Minimal Story",
@@ -79,60 +83,59 @@ Deno.test("fetchStory - minimal valid response", async () => {
   };
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve(new Response(JSON.stringify(minimalStory)));
+  stubFetch(() => Promise.resolve(new Response(JSON.stringify(minimalStory))));
   try {
     const result = await fetchStory(123);
-    assertEquals(result?.id, 123);
-    assertEquals(result?.title, "Minimal Story");
-    assertEquals(result?.url, undefined);
-    assertEquals(result?.descendants, undefined);
-    assertEquals(result?.kids, undefined);
+    expect(result?.id).toBe(123);
+    expect(result?.title).toBe("Minimal Story");
+    expect(result?.url).toBeUndefined();
+    expect(result?.descendants).toBeUndefined();
+    expect(result?.kids).toBeUndefined();
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("fetchStory - null item returns null", async () => {
+test("fetchStory - null item returns null", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
+  stubFetch(() =>
     Promise.resolve(
       new Response("null", {
         headers: { "Content-Type": "application/json" },
       }),
-    );
+    ),
+  );
   try {
     const result = await fetchStory(999);
-    assertEquals(result, null);
+    expect(result).toBeNull();
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("fetchStory - non-ok HTTP returns null", async () => {
+test("fetchStory - non-ok HTTP returns null", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve(new Response("err", { status: 404 }));
+  stubFetch(() => Promise.resolve(new Response("err", { status: 404 })));
   try {
     const result = await fetchStory(999);
-    assertEquals(result, null);
+    expect(result).toBeNull();
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("fetchStory - network error returns null", async () => {
+test("fetchStory - network error returns null", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.reject(new TypeError("network down"));
+  stubFetch(() => Promise.reject(new TypeError("network down")));
   try {
     const result = await fetchStory(999);
-    assertEquals(result, null);
+    expect(result).toBeNull();
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("isStoryWithUrl - narrows link stories only", () => {
+test("isStoryWithUrl - narrows link stories only", () => {
   const withUrl: Story = {
     id: 1,
     title: "A",
@@ -160,18 +163,18 @@ Deno.test("isStoryWithUrl - narrows link stories only", () => {
     type: "job",
   };
 
-  assertEquals(isStoryWithUrl(withUrl), true);
-  assertEquals(isStoryWithUrl(askHn), false);
-  assertEquals(isStoryWithUrl(job), false);
+  expect(isStoryWithUrl(withUrl)).toBe(true);
+  expect(isStoryWithUrl(askHn)).toBe(false);
+  expect(isStoryWithUrl(job)).toBe(false);
   if (isStoryWithUrl(withUrl)) {
     // url is string after narrowing
-    assertEquals(withUrl.url.startsWith("https://"), true);
+    expect(withUrl.url.startsWith("https://")).toBe(true);
   }
 });
 
-Deno.test("fetchComments - filters deleted and non-comments", async () => {
+test("fetchComments - filters deleted and non-comments", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (input) => {
+  stubFetch((input) => {
     const url = String(input);
     const id = Number(url.match(/item\/(\d+)/)?.[1]);
     const bodies: Record<number, unknown> = {
@@ -198,21 +201,21 @@ Deno.test("fetchComments - filters deleted and non-comments", async () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-  };
+  });
   try {
     const comments = await fetchComments([1, 2, 3, 4, 5], 10);
-    assertEquals(comments.length, 2);
-    assertEquals(comments[0].by, "alice");
-    assertEquals(comments[1].by, "bob");
+    expect(comments.length).toBe(2);
+    expect(comments[0].by).toBe("alice");
+    expect(comments[1].by).toBe("bob");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("fetchComments - respects limit", async () => {
+test("fetchComments - respects limit", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
-  globalThis.fetch = () => {
+  stubFetch(() => {
     fetchCount++;
     return Promise.resolve(
       new Response(
@@ -226,17 +229,17 @@ Deno.test("fetchComments - respects limit", async () => {
         { headers: { "Content-Type": "application/json" } },
       ),
     );
-  };
+  });
   try {
     const comments = await fetchComments([10, 11, 12, 13], 2);
-    assertEquals(comments.length, 2);
-    assertEquals(fetchCount, 2);
+    expect(comments.length).toBe(2);
+    expect(fetchCount).toBe(2);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("selectStoriesWithUrls - backfills past Ask HN posts", async () => {
+test("selectStoriesWithUrls - backfills past Ask HN posts", async () => {
   const originalFetch = globalThis.fetch;
   const items: Record<number, unknown> = {
     1: {
@@ -277,7 +280,7 @@ Deno.test("selectStoriesWithUrls - backfills past Ask HN posts", async () => {
     },
   };
 
-  globalThis.fetch = (input) => {
+  stubFetch((input) => {
     const url = String(input);
     const id = Number(url.match(/item\/(\d+)/)?.[1]);
     return Promise.resolve(
@@ -285,92 +288,92 @@ Deno.test("selectStoriesWithUrls - backfills past Ask HN posts", async () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-  };
+  });
 
   try {
     const stories = await selectStoriesWithUrls([1, 2, 3, 4, 5], 2);
-    assertEquals(stories.length, 2);
-    assertEquals(stories[0].id, 2);
-    assertEquals(stories[1].id, 4);
-    assertEquals(stories[0].url, "https://example.com/a");
-    assertEquals(stories[1].url, "https://example.com/b");
+    expect(stories.length).toBe(2);
+    expect(stories[0].id).toBe(2);
+    expect(stories[1].id).toBe(4);
+    expect(stories[0].url).toBe("https://example.com/a");
+    expect(stories[1].url).toBe("https://example.com/b");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("selectStoriesWithUrls - walks multiple batches", async () => {
+test("selectStoriesWithUrls - walks multiple batches", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
   // 25 items: only every 5th has a URL. Batch size is 10, so this
   // requires at least 3 batches to find 5 URL stories.
-  globalThis.fetch = (input) => {
+  stubFetch((input) => {
     fetchCount++;
     const url = String(input);
     const id = Number(url.match(/item\/(\d+)/)?.[1]);
     const hasUrl = id % 5 === 0;
     const body = hasUrl
       ? {
-        id,
-        title: `Story ${id}`,
-        url: `https://example.com/${id}`,
-        score: id,
-        by: "u",
-        time: id,
-        type: "story",
-      }
+          id,
+          title: `Story ${id}`,
+          url: `https://example.com/${id}`,
+          score: id,
+          by: "u",
+          time: id,
+          type: "story",
+        }
       : {
-        id,
-        title: `Ask HN ${id}`,
-        score: id,
-        by: "u",
-        time: id,
-        type: "story",
-      };
+          id,
+          title: `Ask HN ${id}`,
+          score: id,
+          by: "u",
+          time: id,
+          type: "story",
+        };
     return Promise.resolve(
       new Response(JSON.stringify(body), {
         headers: { "Content-Type": "application/json" },
       }),
     );
-  };
+  });
   try {
     const ids = Array.from({ length: 25 }, (_, i) => i + 1);
     const stories = await selectStoriesWithUrls(ids, 5);
-    assertEquals(stories.length, 5);
-    assertEquals(stories[0].id, 5);
-    assertEquals(stories[4].id, 25);
-    assertEquals(fetchCount, 25); // consumed all 25 IDs
+    expect(stories.length).toBe(5);
+    expect(stories[0].id).toBe(5);
+    expect(stories[4].id).toBe(25);
+    expect(fetchCount).toBe(25); // consumed all 25 IDs
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("selectStoriesWithUrls - bails early on systemic outage", async () => {
+test("selectStoriesWithUrls - bails early on systemic outage", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
   // Every item returns null — simulates a total HN API outage
-  globalThis.fetch = () => {
+  stubFetch(() => {
     fetchCount++;
     return Promise.resolve(
       new Response("null", {
         headers: { "Content-Type": "application/json" },
       }),
     );
-  };
+  });
   try {
     // 500 IDs, threshold is 30 consecutive nulls
     const ids = Array.from({ length: 500 }, (_, i) => i + 1);
     const stories = await selectStoriesWithUrls(ids, 10);
-    assertEquals(stories.length, 0);
+    expect(stories.length).toBe(0);
     // Should stop well before all 500 IDs
-    assertEquals(fetchCount <= 30, true);
+    expect(fetchCount <= 30).toBe(true);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-Deno.test("Story type - proper typing", () => {
-  const story: Story = {
+test("Story schema - runtime guard accepts link stories, rejects bad items", () => {
+  const link = {
     id: 123,
     title: "Test Story",
     url: "https://example.com",
@@ -381,14 +384,21 @@ Deno.test("Story type - proper typing", () => {
     descendants: 10,
     kids: [124, 125],
   };
-
-  assertEquals(story.id, 123);
-  assertEquals(story.title, "Test Story");
-  assertEquals(story.url, "https://example.com");
-  assertEquals(story.score, 100);
-  assertEquals(story.by, "testuser");
-  assertEquals(story.time, 1234567890);
-  assertEquals(story.type, "story");
-  assertEquals(story.descendants, 10);
-  assertEquals(story.kids, [124, 125]);
+  expect(StorySchema.safeParse(link).success).toBe(true);
+  expect(StoryWithUrlSchema.safeParse(link).success).toBe(true);
+  // Missing required fields and missing url (for the link schema) fail.
+  expect(StorySchema.safeParse({ id: 1 }).success).toBe(false);
+  expect(
+    StoryWithUrlSchema.safeParse({
+      id: 1,
+      title: "No link",
+      score: 1,
+      by: "u",
+      time: 1,
+      type: "story",
+    }).success,
+  ).toBe(false);
+  // Failed fetch payloads must not pass as stories.
+  expect(StorySchema.safeParse(null).success).toBe(false);
+  expect(StorySchema.safeParse("x").success).toBe(false);
 });

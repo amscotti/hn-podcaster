@@ -8,9 +8,7 @@
  * rank order, capped at `storyCount`. Failed downloads are dropped so script
  * generation never sees empty-content placeholders.
  */
-export function keepSuccessfulDownloads<
-  T extends { text: string },
->(
+export function keepSuccessfulDownloads<T extends { text: string }>(
   stories: T[],
   storyCount: number,
 ): { kept: T[]; dropped: T[] } {

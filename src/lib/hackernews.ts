@@ -1,4 +1,4 @@
-import { z } from "@zod/zod";
+import { z } from "zod";
 import { fetchWithTimeout, HN_FETCH_TIMEOUT_MS } from "./http.ts";
 import { getAppLogger } from "./logger.ts";
 
@@ -38,9 +38,11 @@ export type StoryWithUrl = z.infer<typeof StoryWithUrlSchema>;
  * True when the item is a link story suitable for article download.
  */
 export function isStoryWithUrl(story: Story): story is StoryWithUrl {
-  return story.type === "story" &&
+  return (
+    story.type === "story" &&
     typeof story.url === "string" &&
-    story.url.length > 0;
+    story.url.length > 0
+  );
 }
 
 // Schema for a Hacker News comment item
@@ -59,11 +61,7 @@ export type Comment = z.infer<typeof CommentSchema>;
  * @returns Promise<number[]> Array of story IDs
  */
 export async function fetchTopStories(): Promise<number[]> {
-  const response = await fetchWithTimeout(
-    STORIES_URL,
-    {},
-    HN_FETCH_TIMEOUT_MS,
-  );
+  const response = await fetchWithTimeout(STORIES_URL, {}, HN_FETCH_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(
       `Failed to fetch top stories: ${response.status} ${response.statusText}`,
@@ -90,8 +88,7 @@ export async function fetchStory(id: number): Promise<Story | null> {
       HN_FETCH_TIMEOUT_MS,
     );
     if (!storyResponse.ok) {
-      logger
-        .debug`fetchStory(${id}): HTTP ${storyResponse.status} ${storyResponse.statusText}`;
+      logger.debug`fetchStory(${id}): HTTP ${storyResponse.status} ${storyResponse.statusText}`;
       return null;
     }
     const data: unknown = await storyResponse.json();
@@ -150,8 +147,7 @@ export async function fetchComments(
       if (item === null || typeof item !== "object") return false;
       // Keep only live comments with text (skip dead/deleted/poll options/etc.)
       const obj = item as Record<string, unknown>;
-      return obj["type"] === "comment" &&
-        typeof obj["text"] === "string";
+      return obj.type === "comment" && typeof obj.text === "string";
     })
     .map((item) => CommentSchema.parse(item));
 }

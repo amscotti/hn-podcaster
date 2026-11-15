@@ -1,5 +1,5 @@
 import { createStep } from "@mastra/core/workflows";
-import { z } from "@zod/zod";
+import { z } from "zod";
 import { convert } from "html-to-text";
 import { extractText, getDocumentProxy } from "unpdf";
 import {
@@ -14,11 +14,23 @@ import {
   fetchWithTimeout,
   JINA_FETCH_TIMEOUT_MS,
 } from "../../lib/http.ts";
+import { mapWithConcurrency } from "../../lib/concurrency.ts";
 import { keepSuccessfulDownloads } from "../../lib/format-story.ts";
 import { config } from "../../lib/config.ts";
 import { getAppLogger } from "../../lib/logger.ts";
 
 const logger = getAppLogger("steps");
+
+/** Maximum parallel article downloads in flight. */
+export const DOWNLOAD_CONCURRENCY = 5;
+
+/**
+ * Hard ceiling on article/PDF bodies before extraction. A single
+ * pathological HN link (e.g. a 500 MB PDF) must not buffer into memory;
+ * stories past the cap fail with a clear error and drop (with Jina fallback
+ * still attempted when configured).
+ */
+export const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
 
 /**
  * Browser-like headers to reduce bot-detection 403s. The User-Agent alone is
@@ -30,7 +42,7 @@ const logger = getAppLogger("steps");
 const FETCH_HEADERS = new Headers({
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Accept":
+  Accept:
     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
   "Accept-Encoding": "gzip, deflate, br",
@@ -43,7 +55,7 @@ const FETCH_HEADERS = new Headers({
 
 /**
  * Reduce a thrown error to a short, readable one-liner for warning logs.
- * Deno fetch failures are verbose (URL, IP:port, transport internals, stack);
+ * Fetch failures are verbose (URL, IP:port, transport internals, stack);
  * the useful bit is either our thrown "HTTP <status>" string or the root
  * cause message on the TypeError.
  */
@@ -59,18 +71,77 @@ function summarizeError(error: unknown): string {
 }
 
 /**
+ * Read a response body under the size cap: fail fast on an oversized
+ * Content-Length, then stream with a byte cap so an unbounded body aborts
+ * instead of buffering into memory.
+ */
+export async function readBodyWithCap(
+  response: Response,
+  url: string,
+): Promise<ArrayBuffer> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength) {
+    const advertised = Number(contentLength);
+    if (Number.isFinite(advertised) && advertised > MAX_DOWNLOAD_BYTES) {
+      throw new Error(
+        `Download exceeds 15 MB cap: ${url} advertises ${advertised} bytes`,
+      );
+    }
+  }
+  if (!response.body) return new ArrayBuffer(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_DOWNLOAD_BYTES) {
+        try {
+          await reader.cancel();
+        } catch {
+          // Already handling the cap error; cancel may fail if stream errored.
+        }
+        throw new Error(
+          `Download exceeds 15 MB cap: ${url} exceeded ${MAX_DOWNLOAD_BYTES} bytes`,
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // Lock may already be released if the reader errored/cancelled.
+    }
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return joined.buffer;
+}
+
+/**
  * PDF magic bytes: "%PDF"
  */
-function isPdfBuffer(buffer: ArrayBuffer): boolean {
+export function isPdfBuffer(buffer: ArrayBuffer): boolean {
   const bytes = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength));
-  return bytes[0] === 0x25 && bytes[1] === 0x50 &&
-    bytes[2] === 0x44 && bytes[3] === 0x46;
+  return (
+    bytes[0] === 0x25 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x44 &&
+    bytes[3] === 0x46
+  );
 }
 
 /**
  * Extract text from a PDF buffer
  */
-async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
+export async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
   const pdf = await getDocumentProxy(new Uint8Array(buffer));
   const { text } = await extractText(pdf, { mergePages: true });
   return text;
@@ -79,7 +150,7 @@ async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
 /**
  * Extract text from an HTML buffer
  */
-function extractHtmlText(buffer: ArrayBuffer): string {
+export function extractHtmlText(buffer: ArrayBuffer): string {
   const html = new TextDecoder().decode(buffer);
   return convert(html, { wordwrap: 130 });
 }
@@ -102,7 +173,7 @@ function isTransient(error: unknown, status: number): boolean {
  * failures (network errors, 5xx) are retried with backoff so a single hiccup
  * doesn't drop a story from the podcast.
  */
-async function downloadAndExtract(
+export async function downloadAndExtract(
   url: string,
   retries = 2,
   backoffMs = 500,
@@ -118,7 +189,7 @@ async function downloadAndExtract(
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
-      const buffer = await response.arrayBuffer();
+      const buffer = await readBodyWithCap(response, url);
       return isPdfBuffer(buffer)
         ? await extractPdfText(buffer)
         : extractHtmlText(buffer);
@@ -127,7 +198,7 @@ async function downloadAndExtract(
       const statusMatch = String(error).match(/HTTP (\d{3})/);
       const status = statusMatch ? Number(statusMatch[1]) : 0;
       if (attempt < retries && isTransient(error, status)) {
-        await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
+        await Bun.sleep(backoffMs * (attempt + 1));
         continue;
       }
       throw error;
@@ -143,16 +214,18 @@ async function downloadAndExtract(
  * sources that block a direct fetch with bot detection. Throws if Jina itself
  * is blocked (e.g. the source serves a CAPTCHA).
  */
-async function fetchViaJina(url: string): Promise<string> {
-  const key = config.jinaApiKey;
-  if (!key) throw new Error("JINA_API_KEY not configured");
+export async function fetchViaJina(
+  url: string,
+  jinaApiKey: string | undefined,
+): Promise<string> {
+  if (!jinaApiKey) throw new Error("JINA_API_KEY not configured");
 
   const response = await fetchWithTimeout(
     `https://r.jina.ai/${url}`,
     {
       headers: new Headers({
-        "Authorization": `Bearer ${key}`,
-        "Accept": "text/plain",
+        Authorization: `Bearer ${jinaApiKey}`,
+        Accept: "text/plain",
       }),
     },
     JINA_FETCH_TIMEOUT_MS,
@@ -160,7 +233,9 @@ async function fetchViaJina(url: string): Promise<string> {
   if (!response.ok) {
     throw new Error(`Jina HTTP ${response.status} ${response.statusText}`);
   }
-  const text = await response.text();
+  const text = new TextDecoder().decode(
+    await readBodyWithCap(response, `https://r.jina.ai/${url}`),
+  );
   // Jina annotates pages it couldn't fully render (e.g. CAPTCHA challenges).
   if (/requiring CAPTCHA/i.test(text)) {
     throw new Error("source served a CAPTCHA even via Jina");
@@ -173,17 +248,19 @@ async function fetchViaJina(url: string): Promise<string> {
  * free), and if that fails fall back to the Jina reader proxy when configured.
  * This rescues articles behind bot detection that our direct fetch can't reach.
  */
-async function fetchArticleText(url: string): Promise<string> {
+export async function fetchArticleText(
+  url: string,
+  jinaApiKey: string | undefined,
+): Promise<string> {
   try {
     return await downloadAndExtract(url);
   } catch (directError) {
-    if (!config.jinaApiKey) throw directError;
-    logger.debug`Direct fetch failed; trying Jina reader: ${
-      summarizeError(directError)
-    }`;
-    const text = await fetchViaJina(url);
-    logger
-      .info`Fetched via Jina reader after direct failure (${text.length} chars)`;
+    if (!jinaApiKey) throw directError;
+    logger.debug`Direct fetch failed; trying Jina reader: ${summarizeError(
+      directError,
+    )}`;
+    const text = await fetchViaJina(url, jinaApiKey);
+    logger.info`Fetched via Jina reader after direct failure (${text.length} chars)`;
     return text;
   }
 }
@@ -225,11 +302,10 @@ async function downloadStoryContent(
 ): Promise<StoryWithText> {
   let text = "";
   try {
-    text = await fetchArticleText(story.url);
+    text = await fetchArticleText(story.url, config.jinaApiKey);
     logger.debug`Downloaded: ${story.title}`;
   } catch (error) {
-    logger
-      .warn`Failed to download ${story.title}: ${summarizeError(error)}`;
+    logger.warn`Failed to download ${story.title}: ${summarizeError(error)}`;
     logger.debug`Full error for ${story.title}: ${error}`;
   }
 
@@ -238,19 +314,20 @@ async function downloadStoryContent(
   // text are dropped by keepSuccessfulDownloads, so their comments would
   // be wasted API calls.
   if (
-    text.trim().length > 0 && commentCount > 0 && story.kids &&
+    text.trim().length > 0 &&
+    commentCount > 0 &&
+    story.kids &&
     story.kids.length > 0
   ) {
     try {
       const comments = await fetchComments(story.kids, commentCount);
       commentsText = formatComments(comments);
       commentCounts.set(story.id, comments.length);
-      logger
-        .debug`Fetched ${comments.length} comments for ${story.title}`;
+      logger.debug`Fetched ${comments.length} comments for ${story.title}`;
     } catch (error) {
-      logger.warn`Failed to fetch comments for ${story.title}: ${
-        summarizeError(error)
-      }`;
+      logger.warn`Failed to fetch comments for ${story.title}: ${summarizeError(
+        error,
+      )}`;
       logger.debug`Full error for ${story.title}: ${error}`;
     }
   }
@@ -275,15 +352,14 @@ export const downloadContentStep = createStep({
     storiesWithText: z.array(StoryWithTextSchema),
   }),
   execute: async ({ inputData }) => {
-    logger
-      .info`Downloading content for ${inputData.stories.length} candidate stories`;
+    logger.info`Downloading content for ${inputData.stories.length} candidate stories`;
     const commentCount = config.commentCount;
     const commentCounts = new Map<number, number>();
 
-    const downloaded = await Promise.all(
-      inputData.stories.map((story) =>
-        downloadStoryContent(story, commentCount, commentCounts)
-      ),
+    const downloaded = await mapWithConcurrency(
+      inputData.stories,
+      DOWNLOAD_CONCURRENCY,
+      (story) => downloadStoryContent(story, commentCount, commentCounts),
     );
 
     let { kept: storiesWithText, dropped } = keepSuccessfulDownloads(
@@ -298,24 +374,23 @@ export const downloadContentStep = createStep({
     // which stops after ~30 consecutive HN failures (~30s).
     if (storiesWithText.length < inputData.storyCount) {
       const processedIds = new Set(inputData.stories.map((s) => s.id));
-      const remainingIds = inputData.storyIds.filter((id) =>
-        !processedIds.has(id)
+      const remainingIds = inputData.storyIds.filter(
+        (id) => !processedIds.has(id),
       );
       const deficit = inputData.storyCount - storiesWithText.length;
 
       if (remainingIds.length > 0 && deficit > 0) {
-        logger
-          .info`Backfilling: need ${deficit} more stories, trying ${remainingIds.length} remaining IDs`;
+        logger.info`Backfilling: need ${deficit} more stories, trying ${remainingIds.length} remaining IDs`;
         const moreCandidates = await selectStoriesWithUrls(
           remainingIds,
           deficit,
         );
 
         if (moreCandidates.length > 0) {
-          const moreDownloaded = await Promise.all(
-            moreCandidates.map((story) =>
-              downloadStoryContent(story, commentCount, commentCounts)
-            ),
+          const moreDownloaded = await mapWithConcurrency(
+            moreCandidates,
+            DOWNLOAD_CONCURRENCY,
+            (story) => downloadStoryContent(story, commentCount, commentCounts),
           );
           const { kept: moreKept, dropped: moreDropped } =
             keepSuccessfulDownloads(
@@ -323,8 +398,7 @@ export const downloadContentStep = createStep({
               inputData.storyCount - storiesWithText.length,
             );
           if (moreKept.length > 0) {
-            logger
-              .info`Backfill recovered ${moreKept.length} additional stories`;
+            logger.info`Backfill recovered ${moreKept.length} additional stories`;
           }
           storiesWithText = [...storiesWithText, ...moreKept];
           dropped = [...dropped, ...moreDropped];
@@ -340,16 +414,13 @@ export const downloadContentStep = createStep({
     }
 
     for (const story of dropped) {
-      logger
-        .warn`Dropping story with no content (will not appear in script): ${story.title}`;
+      logger.warn`Dropping story with no content (will not appear in script): ${story.title}`;
     }
 
     if (storiesWithText.length < inputData.storyCount) {
-      logger
-        .warn`Only ${storiesWithText.length}/${inputData.storyCount} stories have downloadable content after filtering and backfill`;
+      logger.warn`Only ${storiesWithText.length}/${inputData.storyCount} stories have downloadable content after filtering and backfill`;
     } else {
-      logger
-        .info`Keeping ${storiesWithText.length}/${inputData.storyCount} stories with content (${dropped.length} download failures dropped)`;
+      logger.info`Keeping ${storiesWithText.length}/${inputData.storyCount} stories with content (${dropped.length} download failures dropped)`;
     }
 
     if (commentCount > 0) {
@@ -360,8 +431,7 @@ export const downloadContentStep = createStep({
         (sum, s) => sum + (commentCounts.get(s.id) ?? 0),
         0,
       );
-      logger
-        .info`Fetched comments for ${commentsOnKept} of ${storiesWithText.length} kept stories (${totalKeptComments} total comments)`;
+      logger.info`Fetched comments for ${commentsOnKept} of ${storiesWithText.length} kept stories (${totalKeptComments} total comments)`;
     }
 
     return { storiesWithText };

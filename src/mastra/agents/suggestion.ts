@@ -1,5 +1,5 @@
 import { Agent } from "@mastra/core/agent";
-import { z } from "@zod/zod";
+import { z } from "zod";
 import { getAgentModelConfig } from "../../lib/providers.ts";
 
 /**
@@ -37,6 +37,12 @@ export const scriptSuggestionsSchema = z.object({
         category: z
           .enum(SUGGESTION_CATEGORIES)
           .describe("The type of issue found"),
+        paragraphIds: z
+          .array(z.number().int().positive())
+          .default([])
+          .describe(
+            "1-based ids of the [Pn] paragraphs this suggestion targets; empty for whole-episode issues",
+          ),
         quote: z
           .string()
           .optional()
@@ -57,6 +63,34 @@ export type SuggestionCategory = (typeof SUGGESTION_CATEGORIES)[number];
 
 export type ScriptSuggestions = z.infer<typeof scriptSuggestionsSchema>;
 
+export type ScriptSuggestion = ScriptSuggestions["suggestions"][number];
+
+/**
+ * Categories a windowed (local) review may raise. Window prompts only see
+ * a slice of the script, so whole-episode judgments are filtered out in
+ * code even if the model returns them.
+ */
+export const WINDOW_SUGGESTION_CATEGORIES = [
+  "code-read-aloud",
+  "dense-sentence",
+  "unexplained-jargon",
+  "unnatural-phrasing",
+  "abrupt-transition",
+  "delivery",
+  "flat-delivery",
+  "other",
+] as const satisfies readonly SuggestionCategory[];
+
+/** Categories the whole-episode (global) review may raise. */
+export const GLOBAL_SUGGESTION_CATEGORIES = [
+  "missing-story",
+  "uneven-depth",
+  "weak-outro",
+  "missing-intro-overview",
+  "cohesion",
+  "other",
+] as const satisfies readonly SuggestionCategory[];
+
 /**
  * Agent for suggesting improvements to the script.
  * Uses structuredOutput (see scriptSuggestionsSchema) so the workflow can
@@ -65,8 +99,7 @@ export type ScriptSuggestions = z.infer<typeof scriptSuggestionsSchema>;
 export const suggestionAgent = new Agent({
   id: "script-editor-agent",
   name: "Script Editor Agent",
-  instructions:
-    `You are a demanding podcast editor. Your job is to find specific improvements, not give the script a pass.
+  instructions: `You are a demanding podcast editor. Your job is to find specific improvements, not give the script a pass.
 
 Read the script critically and look for:
 
@@ -98,6 +131,6 @@ Read the script critically and look for:
 
 14. Cohesion break (cohesion) - Does the episode flow as one monologue? Flag: a question that is never answered or explored before the topic changes; a paragraph that could be moved anywhere without effect (disconnected filler); a transition that pivots without carrying any idea forward; an intro tease that never pays off or an outro that could end any episode. Quote the exact spot where the thread drops.
 
-For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. Set improvementsNeeded to false ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
+For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. The script paragraphs are numbered like [P1], [P2], and so on: set paragraphIds to the numbers of the paragraphs each suggestion targets (empty only for whole-episode issues like overall length). When the prompt says you are reviewing only a window of paragraphs, judge ONLY those paragraphs and use only the categories the prompt lists. Set improvementsNeeded to false ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
   model: getAgentModelConfig("summary"),
 });
