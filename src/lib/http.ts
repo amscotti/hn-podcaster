@@ -48,7 +48,8 @@ export async function fetchWithTimeout(
     clearTimeout(timer);
     if (
       controller.signal.aborted &&
-      error instanceof DOMException && error.name === "AbortError"
+      error instanceof DOMException &&
+      error.name === "AbortError"
     ) {
       throw new TypeError(`Request timed out after ${timeoutMs}ms: ${input}`);
     }

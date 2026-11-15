@@ -1,5 +1,5 @@
 import { createStep } from "@mastra/core/workflows";
-import { z } from "@zod/zod";
+import { z } from "zod";
 import {
   selectStoriesWithUrls,
   StoryWithUrlSchema,
@@ -32,8 +32,7 @@ export const fetchStoriesMetadataStep = createStep({
   }),
   execute: async ({ inputData }) => {
     const candidateCount = inputData.storyCount + DOWNLOAD_CANDIDATE_BUFFER;
-    logger
-      .info`Selecting ${candidateCount} URL stories (${inputData.storyCount} target + ${DOWNLOAD_CANDIDATE_BUFFER} buffer) from ${inputData.storyIds.length} IDs`;
+    logger.info`Selecting ${candidateCount} URL stories (${inputData.storyCount} target + ${DOWNLOAD_CANDIDATE_BUFFER} buffer) from ${inputData.storyIds.length} IDs`;
 
     const stories = await selectStoriesWithUrls(
       inputData.storyIds,
@@ -47,8 +46,7 @@ export const fetchStoriesMetadataStep = createStep({
     }
 
     if (stories.length < candidateCount) {
-      logger
-        .warn`Only found ${stories.length}/${candidateCount} stories with URLs in the top list`;
+      logger.warn`Only found ${stories.length}/${candidateCount} stories with URLs in the top list`;
     } else {
       logger.info`Found ${stories.length} candidate stories with URLs`;
     }
