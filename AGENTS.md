@@ -51,10 +51,9 @@ bun test        # run the test suite
 - **A valid `.env` is required to run `app.ts`** (or anything importing
   `src/lib/config.ts`). `config.ts` loads and validates at module
   initialization and throws immediately if no AI provider API key is
-  present. The existing tests deliberately import only config-free modules
-  (`lib/hackernews.ts`, `lib/http.ts`, `lib/format-story.ts`), so `bun test`
-  runs without `.env` — but any new test that imports config/providers will
-  need one.
+  present. `bun test` runs without a `.env` because the `bunfig.toml` `[test]`
+  preload (`src/__tests__/preload.ts`) seeds placeholder keys before any
+  module import; it never overwrites real env values.
 - Voice defaults to **xAI Eve at speed 0.9** (`src/lib/config.ts`).
   `XAI_VOICE_ID`, `XAI_VOICE_SPEED`, `VOICE_PROVIDER=openai`, or
   `SKIP_AUDIO=true` override it. `LOG_LEVEL` controls LogTape verbosity.
@@ -64,6 +63,10 @@ bun test        # run the test suite
   when no candidates yield content (e.g. total article-fetch outage), so
   `bun run start` exits non-zero instead of writing an empty episode. Wrap
   scheduled runs accordingly.
+- **Untrusted input:** The pipeline ingests arbitrary web content (articles,
+  HN comments) and treats it as data, fencing it in
+  `<<<UNTRUSTED_SOURCE … UNTRUSTED_SOURCE>>>` for the summary prompt.
+  Prompt injection is mitigated, not eliminated — an accepted residual risk.
 - `app.ts` ends with an explicit `process.exit(0)` because Mastra's
   streaming machinery and the AI HTTP clients keep the event loop alive. Do
   not remove it.

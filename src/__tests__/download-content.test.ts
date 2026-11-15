@@ -112,7 +112,10 @@ test("fetchViaJina - returns Jina markdown via proxy URL", async () => {
     return Promise.resolve(new Response("Jina markdown here"));
   });
   try {
-    const text = await fetchViaJina("https://example.com/blocked");
+    const text = await fetchViaJina(
+      "https://example.com/blocked",
+      "test-jina-key",
+    );
     expect(text).toBe("Jina markdown here");
     expect(seenUrl.startsWith("https://r.jina.ai/")).toBe(true);
   } finally {
@@ -134,7 +137,10 @@ test("fetchArticleText - falls back to Jina on direct 403", async () => {
     );
   });
   try {
-    const text = await fetchArticleText("https://example.com/blocked");
+    const text = await fetchArticleText(
+      "https://example.com/blocked",
+      "test-jina-key",
+    );
     expect(text).toBe("Rescued via Jina.");
     expect(seenUrls.length).toBe(2);
     expect(seenUrls[1].startsWith("https://r.jina.ai/")).toBe(true);

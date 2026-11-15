@@ -27,6 +27,9 @@ const XAI_TTS_URL = "https://api.x.ai/v1/tts";
 /** Largest `Retry-After` wait honoured; above this, fall back to backoff. */
 export const MAX_RETRY_AFTER_MS = 60_000;
 
+/** Smallest `Retry-After` wait honoured, so `0` does not retry immediately. */
+export const MIN_RETRY_AFTER_MS = 500;
+
 /** Built-in xAI voices (case-insensitive), per GET /v1/tts/voices (Oct 2026). */
 export const XAI_VOICE_IDS = [
   "altair",
@@ -272,7 +275,7 @@ export class XaiVoice extends MastraVoice<unknown, XaiSpeakOptions, never> {
             logger.warn`xAI TTS Retry-After ${retryAfterMs}ms exceeds ${MAX_RETRY_AFTER_MS}ms cap; falling back to backoff`;
             delay = backoffDelay(attempt);
           } else {
-            delay = retryAfterMs;
+            delay = Math.max(MIN_RETRY_AFTER_MS, retryAfterMs);
           }
         } else {
           delay = backoffDelay(attempt);

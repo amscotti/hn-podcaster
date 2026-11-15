@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { MAX_RETRY_AFTER_MS, XaiVoice } from "../lib/xai-voice.ts";
+import {
+  MAX_RETRY_AFTER_MS,
+  MIN_RETRY_AFTER_MS,
+  XaiVoice,
+} from "../lib/xai-voice.ts";
 
 type FetchStub = (
   input: string | URL | Request,
@@ -215,6 +219,41 @@ test("XaiVoice.speak - caps Retry-After above 60s and falls back to backoff", as
     expect(sleeps.length).toBe(1);
     expect(sleeps[0]).toBeLessThan(1000);
     expect(sleeps[0]).not.toBe(86400000);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Bun.sleep = originalSleep;
+  }
+});
+
+test("XaiVoice.speak - floors Retry-After 0 at 500ms", async () => {
+  expect(MIN_RETRY_AFTER_MS).toBe(500);
+  const originalFetch = globalThis.fetch;
+  const originalSleep = Bun.sleep;
+  const sleeps: number[] = [];
+  // @ts-expect-error probe: Bun.sleep is patched in tests to avoid real waits
+  Bun.sleep = (ms: number) => {
+    sleeps.push(ms);
+    return Promise.resolve();
+  };
+  let calls = 0;
+  stubFetch(() => {
+    calls++;
+    if (calls === 1) {
+      return Promise.resolve(
+        new Response("rate limited", {
+          status: 429,
+          statusText: "Too Many Requests",
+          headers: { "Retry-After": "0" },
+        }),
+      );
+    }
+    return Promise.resolve(new Response("ok-floored"));
+  });
+  try {
+    const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
+    expect(await readStreamText(await voice.speak("Hello"))).toBe("ok-floored");
+    expect(calls).toBe(2);
+    expect(sleeps).toEqual([500]);
   } finally {
     globalThis.fetch = originalFetch;
     Bun.sleep = originalSleep;

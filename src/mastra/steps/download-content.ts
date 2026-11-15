@@ -20,6 +20,32 @@ import { getAppLogger } from "../../lib/logger.ts";
 
 const logger = getAppLogger("steps");
 
+/** Maximum parallel article downloads in flight. */
+export const DOWNLOAD_CONCURRENCY = 5;
+
+/**
+ * Run `worker` over `items` with at most `concurrency` in flight,
+ * preserving input order. Same bounded-pool pattern as the workflow's
+ * `mapWithConcurrency` (duplicated here to avoid a workflow import cycle).
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const limit = Math.max(1, Math.min(concurrency, items.length || 1));
+  const runners = Array.from({ length: limit }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 /**
  * Hard ceiling on article/PDF bodies before extraction. A single
  * pathological HN link (e.g. a 500 MB PDF) must not buffer into memory;
@@ -210,15 +236,17 @@ export async function downloadAndExtract(
  * sources that block a direct fetch with bot detection. Throws if Jina itself
  * is blocked (e.g. the source serves a CAPTCHA).
  */
-export async function fetchViaJina(url: string): Promise<string> {
-  const key = config.jinaApiKey;
-  if (!key) throw new Error("JINA_API_KEY not configured");
+export async function fetchViaJina(
+  url: string,
+  jinaApiKey: string | undefined,
+): Promise<string> {
+  if (!jinaApiKey) throw new Error("JINA_API_KEY not configured");
 
   const response = await fetchWithTimeout(
     `https://r.jina.ai/${url}`,
     {
       headers: new Headers({
-        Authorization: `Bearer ${key}`,
+        Authorization: `Bearer ${jinaApiKey}`,
         Accept: "text/plain",
       }),
     },
@@ -242,15 +270,18 @@ export async function fetchViaJina(url: string): Promise<string> {
  * free), and if that fails fall back to the Jina reader proxy when configured.
  * This rescues articles behind bot detection that our direct fetch can't reach.
  */
-export async function fetchArticleText(url: string): Promise<string> {
+export async function fetchArticleText(
+  url: string,
+  jinaApiKey: string | undefined,
+): Promise<string> {
   try {
     return await downloadAndExtract(url);
   } catch (directError) {
-    if (!config.jinaApiKey) throw directError;
+    if (!jinaApiKey) throw directError;
     logger.debug`Direct fetch failed; trying Jina reader: ${summarizeError(
       directError,
     )}`;
-    const text = await fetchViaJina(url);
+    const text = await fetchViaJina(url, jinaApiKey);
     logger.info`Fetched via Jina reader after direct failure (${text.length} chars)`;
     return text;
   }
@@ -293,7 +324,7 @@ async function downloadStoryContent(
 ): Promise<StoryWithText> {
   let text = "";
   try {
-    text = await fetchArticleText(story.url);
+    text = await fetchArticleText(story.url, config.jinaApiKey);
     logger.debug`Downloaded: ${story.title}`;
   } catch (error) {
     logger.warn`Failed to download ${story.title}: ${summarizeError(error)}`;
@@ -347,10 +378,10 @@ export const downloadContentStep = createStep({
     const commentCount = config.commentCount;
     const commentCounts = new Map<number, number>();
 
-    const downloaded = await Promise.all(
-      inputData.stories.map((story) =>
-        downloadStoryContent(story, commentCount, commentCounts),
-      ),
+    const downloaded = await mapWithConcurrency(
+      inputData.stories,
+      DOWNLOAD_CONCURRENCY,
+      (story) => downloadStoryContent(story, commentCount, commentCounts),
     );
 
     let { kept: storiesWithText, dropped } = keepSuccessfulDownloads(
@@ -378,10 +409,10 @@ export const downloadContentStep = createStep({
         );
 
         if (moreCandidates.length > 0) {
-          const moreDownloaded = await Promise.all(
-            moreCandidates.map((story) =>
-              downloadStoryContent(story, commentCount, commentCounts),
-            ),
+          const moreDownloaded = await mapWithConcurrency(
+            moreCandidates,
+            DOWNLOAD_CONCURRENCY,
+            (story) => downloadStoryContent(story, commentCount, commentCounts),
           );
           const { kept: moreKept, dropped: moreDropped } =
             keepSuccessfulDownloads(
