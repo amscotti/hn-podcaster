@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { XAI_VOICE_IDS } from "./xai-voice.ts";
 
 // Voice provider definitions
 export const VOICE_PROVIDER_IDS = ["openai", "xai"] as const;
@@ -16,6 +17,9 @@ export const AI_PROVIDER_IDS = [
 export type AIProvider = (typeof AI_PROVIDER_IDS)[number];
 
 const AIProviderSchema = z.enum(AI_PROVIDER_IDS);
+
+/** Startup warning fires once even if `loadConfig()` runs repeatedly. */
+let warnedUnknownVoice = false;
 
 /**
  * Application configuration schema with defaults
@@ -260,6 +264,20 @@ export function loadConfig(): Config {
       .map((issue) => `  ${issue.path.join(".")}: ${issue.message}`)
       .join("\n");
     throw new Error(`Invalid configuration:\n${errors}`);
+  }
+
+  // Custom voice ids are supported, but a typo'd built-in id is most likely
+  // a mistake: warn once at startup with the built-in list, never fail.
+  if (result.data.voiceProvider === "xai" && !warnedUnknownVoice) {
+    const known = new Set(
+      XAI_VOICE_IDS.map((id) => (id as string).toLowerCase()),
+    );
+    if (!known.has(result.data.xaiVoiceId.toLowerCase())) {
+      warnedUnknownVoice = true;
+      console.warn(
+        `Unknown XAI_VOICE_ID "${result.data.xaiVoiceId}" (built-in voices: ${Array.from(XAI_VOICE_IDS).join(", ")}); assuming a custom voice id`,
+      );
+    }
   }
 
   return result.data;

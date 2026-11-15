@@ -85,6 +85,9 @@ export interface VoiceProviderHandle {
   speakOptions: Record<string, unknown>;
 }
 
+/** Startup warning fires once even if the provider is created repeatedly. */
+let warnedIgnoredSpeed = false;
+
 /**
  * Create the configured voice provider for TTS.
  * Supports xAI (default) and OpenAI via VOICE_PROVIDER.
@@ -110,6 +113,12 @@ export function createVoiceProvider(): VoiceProviderHandle {
       if (!apiKey) {
         throw new Error(
           "OPENAI_API_KEY is required for the OpenAI voice provider",
+        );
+      }
+      if (config.xaiVoiceSpeed !== 1 && !warnedIgnoredSpeed) {
+        warnedIgnoredSpeed = true;
+        console.warn(
+          `XAI_VOICE_SPEED=${config.xaiVoiceSpeed} is ignored by the OpenAI voice path (speed is an xAI-only knob)`,
         );
       }
       // Note: Mastra voice-openai types only list tts-1/tts-1-hd, but

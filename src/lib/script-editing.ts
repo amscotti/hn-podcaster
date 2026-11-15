@@ -89,9 +89,44 @@ export interface TtsSegmentOptions {
 }
 
 /**
+ * Split one oversize paragraph on word boundaries (never mid-word) so every
+ * piece fits `maxChars`. A single token longer than `maxChars` has no
+ * boundary to use and is hard-split as the only fallback.
+ */
+function splitOnWordBoundaries(text: string, maxChars: number): string[] {
+  if (text.length <= maxChars) return [text];
+  const words = text.split(/\s+/).filter(Boolean);
+  const pieces: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (word.length > maxChars) {
+      if (current) {
+        pieces.push(current);
+        current = "";
+      }
+      for (let i = 0; i < word.length; i += maxChars) {
+        pieces.push(word.slice(i, i + maxChars));
+      }
+      continue;
+    }
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+    } else {
+      pieces.push(current);
+      current = word;
+    }
+  }
+  if (current) pieces.push(current);
+  return pieces.length > 0 ? pieces : [text];
+}
+
+/**
  * Group complete paragraphs into story-sized TTS requests. Sending several
  * paragraphs per request lets the voice carry intonation across transitions,
- * instead of resetting its prosody at every paragraph boundary.
+ * instead of resetting its prosody at every paragraph boundary. A single
+ * paragraph longer than `maxChars` is split on word boundaries so no
+ * emitted segment exceeds `maxChars`.
  */
 export function segmentParagraphsForTts(
   paragraphs: string[],
@@ -99,6 +134,14 @@ export function segmentParagraphsForTts(
 ): string[] {
   const maxChars = options.maxChars ?? XAI_TTS_MAX_CHARS;
   const maxParagraphs = options.maxParagraphs ?? 5;
+  const expanded: string[] = [];
+  for (const paragraph of paragraphs) {
+    if (paragraph.length > maxChars) {
+      expanded.push(...splitOnWordBoundaries(paragraph, maxChars));
+    } else {
+      expanded.push(paragraph);
+    }
+  }
   const segments: string[] = [];
   let current: string[] = [];
 
@@ -106,7 +149,7 @@ export function segmentParagraphsForTts(
     current.reduce((sum, p) => sum + p.length, 0) +
     Math.max(0, current.length - 1) * 2;
 
-  for (const paragraph of paragraphs) {
+  for (const paragraph of expanded) {
     const wouldExceed =
       current.length > 0 &&
       (current.length >= maxParagraphs ||
@@ -332,7 +375,11 @@ export function validateEditedScript(
   );
   if (originalWords > 0) {
     const ratio = editedWords / originalWords;
-    if (ratio < 0.35 || ratio > 3.0) {
+    if (ratio < 0.6) {
+      issues.push(
+        `edit removed too much text (${originalWords} -> ${editedWords} words)`,
+      );
+    } else if (ratio > 3.0) {
       issues.push(
         `word count changed implausibly (${originalWords} -> ${editedWords})`,
       );

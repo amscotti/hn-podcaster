@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { main, resolveExitCode } from "../../app.ts";
+import { isSuccessfulOutcome, main, resolveExitCode } from "../../app.ts";
 
 function captureConsole(): {
   logs: string[];
@@ -27,10 +27,20 @@ function captureConsole(): {
 }
 
 test("resolveExitCode - success 0, non-success 1", () => {
-  expect(resolveExitCode("success")).toBe(0);
-  expect(resolveExitCode("failure")).toBe(1);
-  expect(resolveExitCode("canceled")).toBe(1);
-  expect(resolveExitCode("unknown")).toBe(1);
+  const ok = {
+    status: "success",
+    result: {
+      transcriptPath: "/tmp/t.txt",
+      audioPath: "/tmp/a.mp3",
+      generatedAt: "now",
+    },
+  };
+  expect(resolveExitCode(ok)).toBe(0);
+  expect(resolveExitCode({ status: "failure" })).toBe(1);
+  expect(resolveExitCode({ status: "canceled" })).toBe(1);
+  expect(resolveExitCode({ status: "unknown" })).toBe(1);
+  expect(isSuccessfulOutcome(ok)).toBe(true);
+  expect(isSuccessfulOutcome({ status: "failure" })).toBe(false);
 });
 
 test("main - success returns 0 and prints transcript + audio", async () => {
@@ -76,6 +86,20 @@ test("main - non-success returns 1 and reports failure", async () => {
   try {
     const code = await main(async () => ({ status: "failure" }));
     expect(code).toBe(1);
+    expect(cap.errors.join("\n")).toContain("Podcast generation failed");
+  } finally {
+    cap.restore();
+  }
+});
+
+test("main - success status without result exits 1 and reports failure", async () => {
+  expect(resolveExitCode({ status: "success" })).toBe(1);
+  expect(isSuccessfulOutcome({ status: "success" })).toBe(false);
+  const cap = captureConsole();
+  try {
+    const code = await main(async () => ({ status: "success" }));
+    expect(code).toBe(1);
+    expect(cap.logs.join("\n")).not.toContain("Podcast generation complete");
     expect(cap.errors.join("\n")).toContain("Podcast generation failed");
   } finally {
     cap.restore();

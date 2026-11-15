@@ -43,6 +43,31 @@ import {
 
 const logger = getAppLogger("workflow");
 
+/** Maximum parallel performance-director windows in flight. */
+export const PERFORMANCE_WINDOW_CONCURRENCY = 4;
+
+/**
+ * Run `worker` over `items` with at most `concurrency` in flight,
+ * preserving input order in the results. No new dependency.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const limit = Math.max(1, Math.min(concurrency, items.length || 1));
+  const runners = Array.from({ length: limit }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 /**
  * Calibrated from generated episodes: Eve at the configured 0.9 speed,
  * including delivery pauses, lands near 155 words per minute (vs ~175-180
@@ -623,7 +648,7 @@ ${tagGuidance}`;
       }
     };
 
-    const windowPromises: Array<Promise<PerformanceEdit[]>> = [];
+    const windowRanges: Array<{ start: number; end: number }> = [];
     for (
       let start = 1;
       start <= paragraphs.length;
@@ -633,9 +658,14 @@ ${tagGuidance}`;
         paragraphs.length,
         start + PERFORMANCE_WINDOW_SIZE - 1,
       );
-      windowPromises.push(runWindow(start, end));
+      windowRanges.push({ start, end });
     }
-    const candidates = (await Promise.all(windowPromises)).flat();
+    const windowResults = await mapWithConcurrency(
+      windowRanges,
+      PERFORMANCE_WINDOW_CONCURRENCY,
+      (range) => runWindow(range.start, range.end),
+    );
+    const candidates = windowResults.flat();
 
     // Dedupe by paragraph, cap the pass, sanity-filter each replacement,
     // then apply in descending id order so a multi-paragraph replacement
@@ -701,10 +731,34 @@ ${tagGuidance}`;
   },
 });
 
+/** Build audio segments from a script, failing on an empty script. */
+export function buildAudioSegments(
+  script: string,
+  voiceProvider: string,
+): string[] {
+  const paragraphs = splitParagraphs(script);
+  if (paragraphs.length === 0) {
+    throw new Error("Cannot generate audio: script is empty (no paragraphs)");
+  }
+  const ttsMaxChars =
+    voiceProvider === "openai" ? OPENAI_TTS_MAX_CHARS : XAI_TTS_MAX_CHARS;
+  const rawSegments = segmentParagraphsForTts(paragraphs, {
+    maxChars: ttsMaxChars,
+  });
+  if (rawSegments.length === 0) {
+    throw new Error("Cannot generate audio: script produced no segments");
+  }
+  return rawSegments.map((segment, i) =>
+    i > 0 && voiceProvider === "xai" && !segment.startsWith("[long-pause]")
+      ? `[long-pause] ${segment}`
+      : segment,
+  );
+}
+
 /**
  * Step 8: Generate audio from script using TTS
  */
-const generateAudioStep = createStep({
+export const generateAudioStep = createStep({
   id: "generate-audio",
   inputSchema: z.object({
     script: z.string(),
@@ -718,6 +772,13 @@ const generateAudioStep = createStep({
   }),
   execute: async ({ inputData }) => {
     logger.info`Generating audio from script`;
+
+    // Fail fast on an empty script so no empty transcript/MP3 is written
+    // and reported as success.
+    const scriptParagraphs = splitParagraphs(inputData.script);
+    if (scriptParagraphs.length === 0) {
+      throw new Error("Cannot generate audio: script is empty (no paragraphs)");
+    }
 
     const outputDir = config.outputDir;
 
@@ -756,23 +817,15 @@ const generateAudioStep = createStep({
     // carry intonation across transitions instead of resetting prosody at
     // every paragraph. Later segments get a synthesized long pause at
     // their head so segment joins read as real chapter breaths.
-    const paragraphs = splitParagraphs(inputData.script);
-    const ttsMaxChars =
-      config.voiceProvider === "openai"
-        ? OPENAI_TTS_MAX_CHARS
-        : XAI_TTS_MAX_CHARS;
-    const rawSegments = segmentParagraphsForTts(paragraphs, {
-      maxChars: ttsMaxChars,
-    });
-    const textChunks = rawSegments.map((segment, i) =>
-      i > 0 &&
-      config.voiceProvider === "xai" &&
-      !segment.startsWith("[long-pause]")
-        ? `[long-pause] ${segment}`
-        : segment,
+    const textChunks = buildAudioSegments(
+      inputData.script,
+      config.voiceProvider,
     );
+    if (textChunks.length === 0) {
+      throw new Error("Cannot generate audio: script produced no segments");
+    }
 
-    logger.info`Generating audio for ${textChunks.length} TTS segments (${paragraphs.length} paragraphs)`;
+    logger.info`Generating audio for ${textChunks.length} TTS segments (${scriptParagraphs.length} paragraphs)`;
 
     // Stream each segment's MP3 bytes straight into the final file with a
     // single Bun FileSink. MP3 frames concatenate cleanly, so appending

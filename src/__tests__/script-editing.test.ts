@@ -258,6 +258,37 @@ test("tag budget - guidance-banned tags rejected by validator", () => {
   ).toBe(true);
 });
 
+test("segment limit - oversize paragraph splits on word boundaries under maxChars", () => {
+  const big = Array.from({ length: 1800 }, () => "word").join(" ");
+  expect(big.length).toBeGreaterThan(8000);
+  const segments = segmentParagraphsForTts([big], {
+    maxChars: OPENAI_TTS_MAX_CHARS,
+    maxParagraphs: 10,
+  });
+  // 9000-char paragraph at 4000 must yield several capped segments.
+  expect(segments.length).toBeGreaterThanOrEqual(3);
+  for (const segment of segments) {
+    expect(segment.length).toBeLessThanOrEqual(OPENAI_TTS_MAX_CHARS);
+    // Word-boundary split: boundaries never cut a word.
+    expect(segment.split(/\s+/).every((w) => w === "word")).toBe(true);
+  }
+  // No text lost: rejoining with single spaces reconstructs the paragraph.
+  expect(segments.join(" ")).toBe(big);
+});
+
+test("validator floor - 0.65 ratio accepted, 0.5 rejected as removed too much", () => {
+  const words = Array.from({ length: 100 }, (_v, i) => `w${i}`).join(" ");
+  const kept65 = Array.from({ length: 65 }, (_v, i) => `w${i}`).join(" ");
+  const kept50 = Array.from({ length: 50 }, (_v, i) => `w${i}`).join(" ");
+  const accepted = validateEditedScript(words, [kept65]);
+  expect(accepted.valid).toBe(true);
+  const rejected = validateEditedScript(words, [kept50]);
+  expect(rejected.valid).toBe(false);
+  expect(
+    rejected.issues.some((issue) => issue.includes("removed too much")),
+  ).toBe(true);
+});
+
 test("segment limit - OpenAI path stays under the 4096-char API cap", () => {
   expect(OPENAI_TTS_MAX_CHARS).toBe(4000);
   expect(XAI_TTS_MAX_CHARS).toBe(5200);

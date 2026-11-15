@@ -63,9 +63,18 @@ export interface WorkflowOutcome {
   };
 }
 
-/** Map a workflow status to the process exit code. */
-export function resolveExitCode(status: string): number {
-  return status === "success" ? 0 : 1;
+/** True only for a success status carrying the workflow result. */
+export function isSuccessfulOutcome(
+  outcome: WorkflowOutcome,
+): outcome is WorkflowOutcome & {
+  result: NonNullable<WorkflowOutcome["result"]>;
+} {
+  return outcome.status === "success" && outcome.result !== undefined;
+}
+
+/** Map a workflow outcome to the process exit code. */
+export function resolveExitCode(outcome: WorkflowOutcome): number {
+  return isSuccessfulOutcome(outcome) ? 0 : 1;
 }
 
 /**
@@ -102,7 +111,8 @@ export async function main(
       result = (await runOutput.result) as WorkflowOutcome;
     }
 
-    if (result.status === "success" && result.result) {
+    const exitCode = resolveExitCode(result);
+    if (exitCode === 0 && isSuccessfulOutcome(result)) {
       console.log("\n✅ Podcast generation complete!");
       console.log(`📄 Transcript: ${result.result.transcriptPath}`);
       if (result.result.audioPath) {
@@ -112,7 +122,7 @@ export async function main(
       console.error("\n❌ Podcast generation failed");
       console.error(result);
     }
-    return resolveExitCode(result.status);
+    return exitCode;
   } catch (error) {
     logger.error`Error generating podcast: ${error}`;
     throw error;

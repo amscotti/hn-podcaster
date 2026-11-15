@@ -18,8 +18,14 @@
 
 import { MastraVoice } from "@mastra/core/voice";
 import { fetchWithTimeout, TTS_FETCH_TIMEOUT_MS } from "./http.ts";
+import { getAppLogger } from "./logger.ts";
+
+const logger = getAppLogger("xai-voice");
 
 const XAI_TTS_URL = "https://api.x.ai/v1/tts";
+
+/** Largest `Retry-After` wait honoured; above this, fall back to backoff. */
+export const MAX_RETRY_AFTER_MS = 60_000;
 
 /** Built-in xAI voices (case-insensitive), per GET /v1/tts/voices (Oct 2026). */
 export const XAI_VOICE_IDS = [
@@ -184,9 +190,7 @@ export class XaiVoice extends MastraVoice<unknown, XaiSpeakOptions, never> {
       attempt: number,
       delayMs: number,
     ): void => {
-      console.warn(
-        `xAI TTS retrying after ${reason} (attempt ${attempt + 1}/${maxAttempts}, waiting ${delayMs}ms)`,
-      );
+      logger.warn`xAI TTS retrying after ${reason} (attempt ${attempt + 1}/${maxAttempts}, waiting ${delayMs}ms)`;
     };
     let lastError: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -262,10 +266,17 @@ export class XaiVoice extends MastraVoice<unknown, XaiSpeakOptions, never> {
       );
       const retryable = response.status === 429 || response.status >= 500;
       if (attempt < maxAttempts - 1 && retryable) {
-        const delay =
-          response.status === 429 && retryAfterMs !== undefined
-            ? retryAfterMs
-            : backoffDelay(attempt);
+        let delay: number;
+        if (response.status === 429 && retryAfterMs !== undefined) {
+          if (retryAfterMs > MAX_RETRY_AFTER_MS) {
+            logger.warn`xAI TTS Retry-After ${retryAfterMs}ms exceeds ${MAX_RETRY_AFTER_MS}ms cap; falling back to backoff`;
+            delay = backoffDelay(attempt);
+          } else {
+            delay = retryAfterMs;
+          }
+        } else {
+          delay = backoffDelay(attempt);
+        }
         logRetry(
           `HTTP ${response.status} ${response.statusText}`,
           attempt,
