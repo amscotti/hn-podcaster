@@ -1,22 +1,22 @@
 import { createStep } from "@mastra/core/workflows";
-import { z } from "zod";
 import { convert } from "html-to-text";
 import { extractText, getDocumentProxy } from "unpdf";
+import { z } from "zod";
+import { mapWithConcurrency } from "../../lib/concurrency.ts";
+import { config } from "../../lib/config.ts";
+import { keepSuccessfulDownloads } from "../../lib/format-story.ts";
 import {
   type Comment,
   fetchComments,
-  selectStoriesWithUrls,
   type StoryWithUrl,
   StoryWithUrlSchema,
+  selectStoriesWithUrls,
 } from "../../lib/hackernews.ts";
 import {
   ARTICLE_FETCH_TIMEOUT_MS,
   fetchWithTimeout,
   JINA_FETCH_TIMEOUT_MS,
 } from "../../lib/http.ts";
-import { mapWithConcurrency } from "../../lib/concurrency.ts";
-import { keepSuccessfulDownloads } from "../../lib/format-story.ts";
-import { config } from "../../lib/config.ts";
 import { getAppLogger } from "../../lib/logger.ts";
 
 const logger = getAppLogger("steps");
@@ -53,13 +53,27 @@ const FETCH_HEADERS = new Headers({
   "Upgrade-Insecure-Requests": "1",
 });
 
+/** Typed HTTP non-2xx error so retry logic inspects `.status` directly. */
+export class HttpStatusError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+
+  constructor(status: number, statusText: string, prefix = "HTTP") {
+    super(`${prefix} ${status} ${statusText}`.trim());
+    this.name = "HttpStatusError";
+    this.status = status;
+    this.statusText = statusText;
+  }
+}
+
 /**
  * Reduce a thrown error to a short, readable one-liner for warning logs.
  * Fetch failures are verbose (URL, IP:port, transport internals, stack);
- * the useful bit is either our thrown "HTTP <status>" string or the root
+ * the useful bit is either our thrown HttpStatusError or the root
  * cause message on the TypeError.
  */
 function summarizeError(error: unknown): string {
+  if (error instanceof HttpStatusError) return error.message;
   if (error instanceof Error) {
     const msg = error.message;
     if (/^HTTP \d{3}/.test(msg)) return msg;
@@ -83,6 +97,7 @@ export async function readBodyWithCap(
   if (contentLength) {
     const advertised = Number(contentLength);
     if (Number.isFinite(advertised) && advertised > MAX_DOWNLOAD_BYTES) {
+      await response.body?.cancel().catch(() => {});
       throw new Error(
         `Download exceeds 15 MB cap: ${url} advertises ${advertised} bytes`,
       );
@@ -143,8 +158,12 @@ export function isPdfBuffer(buffer: ArrayBuffer): boolean {
  */
 export async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
   const pdf = await getDocumentProxy(new Uint8Array(buffer));
-  const { text } = await extractText(pdf, { mergePages: true });
-  return text;
+  try {
+    const { text } = await extractText(pdf, { mergePages: true });
+    return text;
+  } finally {
+    await pdf.loadingTask.destroy();
+  }
 }
 
 /**
@@ -157,13 +176,16 @@ export function extractHtmlText(buffer: ArrayBuffer): string {
 
 /**
  * Whether an error or status is transient and worth retrying. Network errors
- * (e.g. HTTP/2 stream resets, connection resets) and 5xx server responses tend
- * to resolve on a subsequent attempt; 4xx client errors will not.
+ * (e.g. HTTP/2 stream resets, connection resets), body-read abort timeouts,
+ * and 5xx server responses tend to resolve on a subsequent attempt; 4xx
+ * client errors will not.
  */
 function isTransient(error: unknown, status: number): boolean {
   if (status >= 500) return true;
-  // fetch() throws a TypeError on network/transport failures (incl. timeouts)
-  return error instanceof TypeError;
+  // fetch() throws a TypeError on network/transport failures (incl. header
+  // timeouts), while body-phase stalls reject with DOMException("AbortError").
+  if (error instanceof TypeError) return true;
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 /**
@@ -187,7 +209,8 @@ export async function downloadAndExtract(
         ARTICLE_FETCH_TIMEOUT_MS,
       );
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        await response.body?.cancel().catch(() => {});
+        throw new HttpStatusError(response.status, response.statusText);
       }
       const buffer = await readBodyWithCap(response, url);
       return isPdfBuffer(buffer)
@@ -195,8 +218,7 @@ export async function downloadAndExtract(
         : extractHtmlText(buffer);
     } catch (error) {
       lastError = error;
-      const statusMatch = String(error).match(/HTTP (\d{3})/);
-      const status = statusMatch ? Number(statusMatch[1]) : 0;
+      const status = error instanceof HttpStatusError ? error.status : 0;
       if (attempt < retries && isTransient(error, status)) {
         await Bun.sleep(backoffMs * (attempt + 1));
         continue;
@@ -231,7 +253,12 @@ export async function fetchViaJina(
     JINA_FETCH_TIMEOUT_MS,
   );
   if (!response.ok) {
-    throw new Error(`Jina HTTP ${response.status} ${response.statusText}`);
+    await response.body?.cancel().catch(() => {});
+    throw new HttpStatusError(
+      response.status,
+      response.statusText,
+      "Jina HTTP",
+    );
   }
   const text = new TextDecoder().decode(
     await readBodyWithCap(response, `https://r.jina.ai/${url}`),
@@ -292,13 +319,12 @@ export const StoryWithTextSchema = StoryWithUrlSchema.extend({
 export type StoryWithText = z.infer<typeof StoryWithTextSchema>;
 
 /**
- * Download article text and community comments for a single story.
- * Extracted so the backfill path can reuse the exact same logic.
+ * Download article text for a single story. Comments are fetched in a
+ * separate pass only for the final kept stories so discarded buffer
+ * candidates never fan out unnecessary Hacker News API requests.
  */
-async function downloadStoryContent(
+async function downloadStoryArticle(
   story: StoryWithUrl,
-  commentCount: number,
-  commentCounts: Map<number, number>,
 ): Promise<StoryWithText> {
   let text = "";
   try {
@@ -309,30 +335,33 @@ async function downloadStoryContent(
     logger.debug`Full error for ${story.title}: ${error}`;
   }
 
-  let commentsText = "";
-  // Only fetch comments when the article downloaded — stories with empty
-  // text are dropped by keepSuccessfulDownloads, so their comments would
-  // be wasted API calls.
-  if (
-    text.trim().length > 0 &&
-    commentCount > 0 &&
-    story.kids &&
-    story.kids.length > 0
-  ) {
-    try {
-      const comments = await fetchComments(story.kids, commentCount);
-      commentsText = formatComments(comments);
-      commentCounts.set(story.id, comments.length);
-      logger.debug`Fetched ${comments.length} comments for ${story.title}`;
-    } catch (error) {
-      logger.warn`Failed to fetch comments for ${story.title}: ${summarizeError(
-        error,
-      )}`;
-      logger.debug`Full error for ${story.title}: ${error}`;
-    }
-  }
+  return { ...story, text, commentsText: "" };
+}
 
-  return { ...story, text, commentsText };
+/**
+ * Fetch community comments for a single kept story.
+ */
+async function attachStoryComments(
+  story: StoryWithText,
+  commentCount: number,
+  commentCounts: Map<number, number>,
+): Promise<StoryWithText> {
+  if (commentCount <= 0 || !story.kids || story.kids.length === 0) {
+    return story;
+  }
+  try {
+    const comments = await fetchComments(story.kids, commentCount);
+    const commentsText = formatComments(comments);
+    commentCounts.set(story.id, comments.length);
+    logger.debug`Fetched ${comments.length} comments for ${story.title}`;
+    return { ...story, commentsText };
+  } catch (error) {
+    logger.warn`Failed to fetch comments for ${story.title}: ${summarizeError(
+      error,
+    )}`;
+    logger.debug`Full error for ${story.title}: ${error}`;
+    return story;
+  }
 }
 
 /**
@@ -340,6 +369,7 @@ async function downloadStoryContent(
  * Drops failed downloads and trims to `storyCount` before handoff to summaries.
  * If the initial candidate pool yields too few successes, backfills from the
  * remaining HN IDs so the episode stays close to the configured size.
+ * Comments are fetched only for the final kept stories.
  */
 export const downloadContentStep = createStep({
   id: "download-content",
@@ -354,12 +384,11 @@ export const downloadContentStep = createStep({
   execute: async ({ inputData }) => {
     logger.info`Downloading content for ${inputData.stories.length} candidate stories`;
     const commentCount = config.commentCount;
-    const commentCounts = new Map<number, number>();
 
     const downloaded = await mapWithConcurrency(
       inputData.stories,
       DOWNLOAD_CONCURRENCY,
-      (story) => downloadStoryContent(story, commentCount, commentCounts),
+      (story) => downloadStoryArticle(story),
     );
 
     let { kept: storiesWithText, dropped } = keepSuccessfulDownloads(
@@ -390,7 +419,7 @@ export const downloadContentStep = createStep({
           const moreDownloaded = await mapWithConcurrency(
             moreCandidates,
             DOWNLOAD_CONCURRENCY,
-            (story) => downloadStoryContent(story, commentCount, commentCounts),
+            (story) => downloadStoryArticle(story),
           );
           const { kept: moreKept, dropped: moreDropped } =
             keepSuccessfulDownloads(
@@ -424,6 +453,12 @@ export const downloadContentStep = createStep({
     }
 
     if (commentCount > 0) {
+      const commentCounts = new Map<number, number>();
+      storiesWithText = await mapWithConcurrency(
+        storiesWithText,
+        DOWNLOAD_CONCURRENCY,
+        (story) => attachStoryComments(story, commentCount, commentCounts),
+      );
       const commentsOnKept = storiesWithText.filter(
         (s) => s.commentsText.length > 0,
       ).length;

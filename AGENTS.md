@@ -19,7 +19,7 @@ repo-specific facts are included.
 
 ```bash
 bun run start   # run the podcast pipeline (auto-loads .env)
-bun run check   # tsc --noEmit && biome lint . && biome format .
+bun run check   # tsc --noEmit && biome check .
 bun run format  # biome format --write .
 bun test        # run the test suite
 ```

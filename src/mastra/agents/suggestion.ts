@@ -111,7 +111,7 @@ Read the script critically and look for:
 
 4. Unexplained jargon (unexplained-jargon) - Technical terms or acronyms that need plain-English explanation? List them.
 
-5. Uneven depth (uneven-depth) - Does one story get lots of attention while another gets just 1-2 sentences? Every story deserves similar coverage. Call out any imbalance.
+5. Uneven depth (uneven-depth) - Intentional anchor-vs-crisp pacing is expected: 2-3 anchor stories should get 3-4 paragraphs to breathe, while the remaining stories stay crisp at 1-2 paragraphs. Do NOT flag that deliberate contrast; ONLY flag a story reduced to a throwaway drive-by mention (e.g. 1-2 bare sentences with no real explanation) or a weak story padded out with filler.
 
 6. Unnatural phrasing (unnatural-phrasing) - Anything that sounds written rather than spoken? Choppy fragments? Quote specific phrases.
 

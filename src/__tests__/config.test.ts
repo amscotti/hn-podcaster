@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   detectAIProvider,
   loadConfig,
+  parseBoolEnv,
   parseFloatEnv,
   parseIntEnv,
 } from "../lib/config.ts";
@@ -35,7 +36,13 @@ function withEnv(
       }
     }
   };
-  const result = fn();
+  let result: void | Promise<void>;
+  try {
+    result = fn();
+  } catch (error) {
+    restore();
+    throw error;
+  }
   if (result instanceof Promise) {
     return result.finally(restore);
   }
@@ -200,4 +207,149 @@ test("loadConfig - throws when selected provider key is missing", () => {
       expect(() => loadConfig()).toThrow(/OPENAI_API_KEY is required/);
     },
   );
+});
+
+test("withEnv - restores Bun.env even when callback throws synchronously", () => {
+  const previous = Bun.env.STORY_COUNT;
+  expect(() =>
+    withEnv({ STORY_COUNT: "99", TEST_ONLY_TEMP_VAR: "leaked" }, () => {
+      expect(Bun.env.STORY_COUNT).toBe("99");
+      expect(Bun.env.TEST_ONLY_TEMP_VAR).toBe("leaked");
+      throw new Error("boom");
+    }),
+  ).toThrow("boom");
+  expect(Bun.env.STORY_COUNT).toBe(previous);
+  expect(Bun.env.TEST_ONLY_TEMP_VAR).toBeUndefined();
+});
+
+test("parseBoolEnv - trims, handles empty/false/true, rejects typos", () => {
+  withEnv({ SKIP_AUDIO: undefined }, () => {
+    expect(parseBoolEnv("SKIP_AUDIO")).toBe(false);
+  });
+  withEnv({ SKIP_AUDIO: "" }, () => {
+    expect(parseBoolEnv("SKIP_AUDIO")).toBe(false);
+  });
+  withEnv({ SKIP_AUDIO: "   " }, () => {
+    expect(parseBoolEnv("SKIP_AUDIO")).toBe(false);
+  });
+  withEnv({ SKIP_AUDIO: " true " }, () => {
+    expect(parseBoolEnv("SKIP_AUDIO")).toBe(true);
+  });
+  withEnv({ SKIP_AUDIO: "TRUE" }, () => {
+    expect(parseBoolEnv("SKIP_AUDIO")).toBe(true);
+  });
+  withEnv({ SKIP_AUDIO: " False " }, () => {
+    expect(parseBoolEnv("SKIP_AUDIO")).toBe(false);
+  });
+  withEnv({ SKIP_AUDIO: "1" }, () => {
+    expect(() => parseBoolEnv("SKIP_AUDIO")).toThrow(/Invalid SKIP_AUDIO.*"1"/);
+  });
+  withEnv({ SKIP_AUDIO: "yes" }, () => {
+    expect(() => parseBoolEnv("SKIP_AUDIO")).toThrow(
+      /Invalid SKIP_AUDIO.*"yes"/,
+    );
+  });
+});
+
+test("loadConfig - VOICE_PROVIDER validation and missing voice key hints", () => {
+  withEnv({ ...BASE_ENV, VOICE_PROVIDER: "elevenlabs" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid VOICE_PROVIDER.*elevenlabs/);
+  });
+  withEnv(
+    {
+      ...BASE_ENV,
+      VOICE_PROVIDER: "openai",
+      OPENAI_API_KEY: "test-openai-key",
+    },
+    () => {
+      const cfg = loadConfig();
+      expect(cfg.voiceProvider).toBe("openai");
+    },
+  );
+  withEnv(
+    {
+      ...BASE_ENV,
+      VOICE_PROVIDER: "openai",
+      OPENAI_API_KEY: undefined,
+    },
+    () => {
+      expect(() => loadConfig()).toThrow(
+        /OPENAI_API_KEY is required.*VOICE_PROVIDER=xai/,
+      );
+    },
+  );
+  withEnv(
+    {
+      ...BASE_ENV,
+      AI_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "test-anthropic-key",
+      XAI_API_KEY: undefined,
+      VOICE_PROVIDER: "xai",
+      SKIP_AUDIO: undefined,
+    },
+    () => {
+      expect(() => loadConfig()).toThrow(
+        /XAI_API_KEY is required.*VOICE_PROVIDER=openai with OPENAI_API_KEY/,
+      );
+    },
+  );
+});
+
+test("loadConfig - SKIP_AUDIO=true bypasses voice key check and trims whitespace", () => {
+  withEnv(
+    {
+      ...BASE_ENV,
+      AI_PROVIDER: "anthropic",
+      ANTHROPIC_API_KEY: "test-anthropic-key",
+      XAI_API_KEY: undefined,
+      OPENAI_API_KEY: undefined,
+      VOICE_PROVIDER: "xai",
+      SKIP_AUDIO: " true ",
+    },
+    () => {
+      const cfg = loadConfig();
+      expect(cfg.skipAudio).toBe(true);
+      expect(cfg.aiProvider).toBe("anthropic");
+    },
+  );
+  withEnv({ ...BASE_ENV, SKIP_AUDIO: "notabool" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid SKIP_AUDIO/);
+  });
+});
+
+test("loadConfig - tracks xaiVoiceSpeedExplicit and enforces speed & lower bounds", () => {
+  withEnv({ ...BASE_ENV, XAI_VOICE_SPEED: undefined }, () => {
+    const cfg = loadConfig();
+    expect(cfg.xaiVoiceSpeed).toBe(0.9);
+    expect(cfg.xaiVoiceSpeedExplicit).toBe(false);
+  });
+  withEnv({ ...BASE_ENV, XAI_VOICE_SPEED: "0.9" }, () => {
+    const cfg = loadConfig();
+    expect(cfg.xaiVoiceSpeed).toBe(0.9);
+    expect(cfg.xaiVoiceSpeedExplicit).toBe(true);
+  });
+  withEnv({ ...BASE_ENV, XAI_VOICE_SPEED: "0.7" }, () => {
+    expect(loadConfig().xaiVoiceSpeed).toBe(0.7);
+  });
+  withEnv({ ...BASE_ENV, XAI_VOICE_SPEED: "1.5" }, () => {
+    expect(loadConfig().xaiVoiceSpeed).toBe(1.5);
+  });
+  withEnv({ ...BASE_ENV, XAI_VOICE_SPEED: "0.69" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
+  withEnv({ ...BASE_ENV, XAI_VOICE_SPEED: "1.51" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
+  withEnv({ ...BASE_ENV, STORY_COUNT: "0" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
+  withEnv({ ...BASE_ENV, TARGET_DURATION_MINUTES: "0" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
+  withEnv({ ...BASE_ENV, IMPROVEMENT_ITERATIONS: "-1" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
+  withEnv({ ...BASE_ENV, COMMENT_COUNT: "-1" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
 });

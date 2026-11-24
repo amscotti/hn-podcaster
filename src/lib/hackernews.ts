@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mapWithConcurrency } from "./concurrency.ts";
 import { fetchWithTimeout, HN_FETCH_TIMEOUT_MS } from "./http.ts";
 import { getAppLogger } from "./logger.ts";
 
@@ -35,14 +36,18 @@ export const StoryWithUrlSchema = StorySchema.extend({
 export type StoryWithUrl = z.infer<typeof StoryWithUrlSchema>;
 
 /**
- * True when the item is a link story suitable for article download.
+ * True when the item is a link story with an http(s) URL suitable for article download.
  */
 export function isStoryWithUrl(story: Story): story is StoryWithUrl {
-  return (
-    story.type === "story" &&
-    typeof story.url === "string" &&
-    story.url.length > 0
-  );
+  if (story.type !== "story" || typeof story.url !== "string") {
+    return false;
+  }
+  try {
+    const { protocol } = new URL(story.url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 // Schema for a Hacker News comment item
@@ -63,6 +68,7 @@ export type Comment = z.infer<typeof CommentSchema>;
 export async function fetchTopStories(): Promise<number[]> {
   const response = await fetchWithTimeout(STORIES_URL, {}, HN_FETCH_TIMEOUT_MS);
   if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
     throw new Error(
       `Failed to fetch top stories: ${response.status} ${response.statusText}`,
     );
@@ -88,6 +94,7 @@ export async function fetchStory(id: number): Promise<Story | null> {
       HN_FETCH_TIMEOUT_MS,
     );
     if (!storyResponse.ok) {
+      await storyResponse.body?.cancel().catch(() => {});
       logger.debug`fetchStory(${id}): HTTP ${storyResponse.status} ${storyResponse.statusText}`;
       return null;
     }
@@ -117,17 +124,23 @@ async function fetchItemRaw(id: number): Promise<unknown | null> {
       {},
       HN_FETCH_TIMEOUT_MS,
     );
-    if (!response.ok) return null;
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return null;
+    }
     return await response.json();
   } catch {
     return null;
   }
 }
 
+/** Maximum concurrent HN comment item fetches per story. */
+export const COMMENT_FETCH_CONCURRENCY = 10;
+
 /**
  * Fetches top-level comments for a story. The `kids` array on a story is
  * ordered roughly by score/recency, so the first `limit` ids give the most
- * visible (top) comments. Dead or deleted comments (no text) are dropped.
+ * visible (top) comments. Dead, deleted, or malformed comments are dropped.
  *
  * @param ids Comment (item) ids to fetch - typically a story's `kids`
  * @param limit Maximum number of comments to fetch and return
@@ -140,16 +153,33 @@ export async function fetchComments(
   const limited = ids.slice(0, Math.max(0, limit));
   if (limited.length === 0) return [];
 
-  const items = await Promise.all(limited.map((id) => fetchItemRaw(id)));
+  const items = await mapWithConcurrency(
+    limited,
+    COMMENT_FETCH_CONCURRENCY,
+    (id) => fetchItemRaw(id),
+  );
 
-  return items
-    .filter((item): item is Record<string, unknown> => {
-      if (item === null || typeof item !== "object") return false;
-      // Keep only live comments with text (skip dead/deleted/poll options/etc.)
-      const obj = item as Record<string, unknown>;
-      return obj.type === "comment" && typeof obj.text === "string";
-    })
-    .map((item) => CommentSchema.parse(item));
+  const comments: Comment[] = [];
+  for (const item of items) {
+    if (item === null || typeof item !== "object") continue;
+    // Keep only live comments with text (skip dead/deleted/poll options/etc.)
+    const obj = item as Record<string, unknown>;
+    if (
+      obj.type !== "comment" ||
+      obj.dead === true ||
+      obj.deleted === true ||
+      typeof obj.text !== "string"
+    ) {
+      continue;
+    }
+    const parsed = CommentSchema.safeParse(obj);
+    if (!parsed.success) {
+      logger.debug`fetchComments: skipping malformed comment item`;
+      continue;
+    }
+    comments.push(parsed.data);
+  }
+  return comments;
 }
 
 /** How many story IDs to resolve in parallel while backfilling. */

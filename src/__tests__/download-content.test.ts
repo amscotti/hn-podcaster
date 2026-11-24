@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test";
 import {
   downloadAndExtract,
+  downloadContentStep,
   extractHtmlText,
   fetchArticleText,
   fetchViaJina,
+  HttpStatusError,
   isPdfBuffer,
   MAX_DOWNLOAD_BYTES,
+  readBodyWithCap,
 } from "../mastra/steps/download-content.ts";
 
 type FetchStub = (
@@ -189,6 +192,173 @@ test("downloadAndExtract - size cap aborts streamed body over the cap", async ()
     ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain("15 MB cap");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("HttpStatusError carries status on non-2xx and cancels response body", async () => {
+  const originalFetch = globalThis.fetch;
+  let canceledDirect = false;
+  let canceledJina = false;
+  let canceledOversize = false;
+
+  const makeCancelTrackingResponse = (
+    onCancel: () => void,
+    init: ResponseInit,
+  ) =>
+    new Response(
+      new ReadableStream({
+        pull() {
+          // Wait indefinitely until canceled.
+        },
+        cancel() {
+          onCancel();
+        },
+      }),
+      init,
+    );
+
+  // 1. downloadAndExtract non-2xx
+  stubFetch(() =>
+    Promise.resolve(
+      makeCancelTrackingResponse(
+        () => {
+          canceledDirect = true;
+        },
+        { status: 404, statusText: "Not Found" },
+      ),
+    ),
+  );
+  try {
+    const err = await downloadAndExtract("https://example.com/404", 0, 1).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(HttpStatusError);
+    expect((err as HttpStatusError).status).toBe(404);
+    expect(canceledDirect).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 2. fetchViaJina non-2xx
+  stubFetch(() =>
+    Promise.resolve(
+      makeCancelTrackingResponse(
+        () => {
+          canceledJina = true;
+        },
+        { status: 502, statusText: "Bad Gateway" },
+      ),
+    ),
+  );
+  try {
+    const err = await fetchViaJina(
+      "https://example.com/502",
+      "test-jina-key",
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpStatusError);
+    expect((err as HttpStatusError).status).toBe(502);
+    expect(canceledJina).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 3. readBodyWithCap Content-Length fast-fail cancels body
+  const hugeResponse = makeCancelTrackingResponse(
+    () => {
+      canceledOversize = true;
+    },
+    { headers: { "Content-Length": String(MAX_DOWNLOAD_BYTES + 10) } },
+  );
+  const capErr = await readBodyWithCap(
+    hugeResponse,
+    "https://example.com/huge",
+  ).catch((e: unknown) => e);
+  expect(capErr).toBeInstanceOf(Error);
+  expect(canceledOversize).toBe(true);
+});
+
+test("downloadAndExtract retries body-phase DOMException AbortError", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  stubFetch(() => {
+    calls++;
+    if (calls === 1) {
+      const abortingBody = new ReadableStream({
+        pull() {
+          throw new DOMException("The operation was aborted.", "AbortError");
+        },
+      });
+      return Promise.resolve(new Response(abortingBody));
+    }
+    return Promise.resolve(
+      new Response("<html><body><p>Recovered after abort.</p></body></html>"),
+    );
+  });
+  try {
+    const text = await downloadAndExtract("https://example.com/stall", 2, 1);
+    expect(text).toContain("Recovered after abort.");
+    expect(calls).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("downloadContentStep fetches HN comments only for final kept stories", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchedCommentIds: number[] = [];
+  stubFetch((input) => {
+    const url = String(input);
+    const commentMatch = url.match(/\/item\/(\d+)\.json$/);
+    if (commentMatch) {
+      const cid = Number(commentMatch[1]);
+      fetchedCommentIds.push(cid);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: cid,
+            type: "comment",
+            by: "reader",
+            text: `Comment ${cid}`,
+            time: 1_700_000_000,
+          }),
+        ),
+      );
+    }
+    return Promise.resolve(
+      new Response(`<html><body><p>Article for ${url}</p></body></html>`),
+    );
+  });
+  try {
+    // 5 candidate stories with kids, storyCount = 2 -> buffer stories 3-5 are discarded.
+    const stories = Array.from({ length: 5 }, (_v, i) => ({
+      id: i + 1,
+      title: `Story ${i + 1}`,
+      url: `https://example.com/story-${i + 1}`,
+      score: 100 - i,
+      by: "author",
+      time: 1_700_000_000,
+      type: "story",
+      kids: [1000 + (i + 1)],
+    }));
+    const execute = downloadContentStep.execute as unknown as (
+      args: unknown,
+    ) => Promise<{
+      storiesWithText: Array<{ id: number; commentsText: string }>;
+    }>;
+    const out = await execute({
+      inputData: {
+        stories,
+        storyCount: 2,
+        storyIds: stories.map((s) => s.id),
+      },
+    });
+    expect(out.storiesWithText.map((s) => s.id)).toEqual([1, 2]);
+    expect(out.storiesWithText[0].commentsText).toContain("Comment 1001");
+    expect(out.storiesWithText[1].commentsText).toContain("Comment 1002");
+    // Discarded buffer stories (3, 4, 5 -> comment ids 1003, 1004, 1005) must NOT be fetched!
+    expect(fetchedCommentIds.sort((a, b) => a - b)).toEqual([1001, 1002]);
   } finally {
     globalThis.fetch = originalFetch;
   }

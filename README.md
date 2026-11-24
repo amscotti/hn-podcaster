@@ -17,11 +17,11 @@ conversational podcast script, and converts it to audio.
 ## Example Output
 
 - [April 14, 2025 Podcast](example/2025-04-14_podcast.mp3)
-  ([Transcript](example/2025-04-14_podcast.txt))
+  ([Transcript](example/2025-04-14_transcription.txt))
 - [March 25, 2025 Podcast](example/2025-03-25_podcast.mp3)
-  ([Transcript](example/2025-03-25_podcast.txt))
+  ([Transcript](example/2025-03-25_transcription.txt))
 - [November 7, 2023 Podcast](example/2023-11-07_podcast.mp3)
-  ([Transcript](example/2023-11-07_podcast.txt))
+  ([Transcript](example/2023-11-07_transcription.txt))
 
 ## Features
 
@@ -86,12 +86,14 @@ XAI_API_KEY=your_xai_key_here
 
 **Supported providers and their models:**
 
-| Provider  | Summary Model    | Main Model           |
-| --------- | ---------------- | -------------------- |
-| xai       | grok-4.7         | grok-4.7             |
-| openai    | gpt-6-luna       | gpt-6.1-sol          |
-| anthropic | claude-haiku-5-5 | claude-sonnet-5-5    |
+| Provider  | Summary Model    | Main Model             |
+| --------- | ---------------- | ---------------------- |
+| xai       | grok-4.7         | grok-4.7               |
+| openai*   | gpt-6-luna       | gpt-6.1-sol            |
+| anthropic | claude-haiku-5-5 | claude-sonnet-5-5      |
 | google    | gemini-3.8-flash | gemini-3.1-pro-preview |
+
+*\*OpenAI chat model IDs (`gpt-6-luna`, `gpt-6.1-sol`) were updated from OpenAI's docs/model catalog and have not yet been live-verified locally with an OpenAI API key.*
 
 **Voice / TTS** defaults to **xAI** (Grok TTS). Set `VOICE_PROVIDER=openai` to
 use OpenAI TTS instead, or `SKIP_AUDIO=true` for transcript-only runs.
@@ -104,6 +106,8 @@ Note: OpenAI voice `gpt-4o-mini-tts` shuts down Jan 6 2027 and needs a realtime-
 STORY_COUNT=7
 
 # Number of script improvement iterations (default: 5, 0 skips the improve loop)
+# Each iteration runs multiple agentic suggestion + tool-edit LLM calls;
+# lowering this (e.g. 2-3, or 0) reduces LLM spend and runtime.
 IMPROVEMENT_ITERATIONS=5
 
 # Top HN comments to fetch per story for community context (default: 25, 0 disables)
@@ -133,7 +137,8 @@ SKIP_AUDIO=true
 
 # Content Fetching (optional)
 # JINA_API_KEY=           # Enables Jina reader fallback (https://r.jina.ai) for
-                          # articles that block the direct fetch with bot detection
+                          # articles that block the direct fetch with bot detection.
+                          # Note: fallback forwards full article URLs (including query parameters) to r.jina.ai.
 ```
 
 ### 4. Run
@@ -174,7 +179,7 @@ src/
 │   ├── agents/               # AI agent definitions
 │   │   ├── summary.ts        # Story summarization agent
 │   │   ├── podcast.ts        # Script generation agent
-│   │   ├── suggestion.ts     # Script editor agent
+│   │   ├── suggestion.ts     # Script suggestion agent
 │   │   ├── improvement.ts    # Script editor + performance director agents
 │   │   └── index.ts          # Agent exports
 │   ├── steps/                # Workflow step definitions
@@ -186,6 +191,7 @@ src/
 │   │   └── podcast-generation.ts
 │   └── index.ts              # Central Mastra entry point
 ├── lib/                      # Support code
+│   ├── concurrency.ts        # Bounded-concurrency helper (mapWithConcurrency)
 │   ├── config.ts             # Configuration with Zod validation
 │   ├── providers.ts          # AI provider configuration
 │   ├── hackernews.ts         # HN API client

@@ -125,7 +125,7 @@ export async function main(
     return exitCode;
   } catch (error) {
     logger.error`Error generating podcast: ${error}`;
-    throw error;
+    return 1;
   }
 }
 
@@ -136,6 +136,7 @@ if (import.meta.main) {
   main()
     .then((code) => process.exit(code))
     .catch((error) => {
+      // Last-resort safeguard: main() already catches and logs workflow errors.
       console.error(error);
       process.exit(1);
     });

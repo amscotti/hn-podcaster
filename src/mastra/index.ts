@@ -12,10 +12,10 @@ export {
   podcastAgent,
   type ScriptSuggestion,
   type ScriptSuggestions,
-  scriptSuggestionsSchema,
   STYLE_INSTRUCTIONS,
-  suggestionAgent,
   type SuggestionCategory,
+  scriptSuggestionsSchema,
+  suggestionAgent,
   summaryAgent,
 } from "./agents/index.ts";
 
@@ -31,7 +31,7 @@ export {
 
 // Workflows
 export {
-  podcastWorkflow,
   type PodcastWorkflowInput,
   type PodcastWorkflowOutput,
+  podcastWorkflow,
 } from "./workflows/podcast-generation.ts";

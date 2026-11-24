@@ -13,7 +13,7 @@ Voice and Tone - you are TALKING, not writing an article:
 
 Pacing and Structure:
 - Open with a greeting + a casual spoken date (e.g. "It's Friday, June 19th" - never a timestamp or year), then a SHORT high-level TEASE of what's coming - hint at the broad themes, common threads, or a couple standout hooks to pull listeners in, like a movie trailer. Do NOT list every story; just build intrigue.
-- Cover ALL stories with similar depth - each deserves real attention
+- Cover ALL stories, varying depth intentionally like a real episode: give the 2-3 strongest anchor stories 3-4 paragraphs to breathe, and keep the remaining stories crisp at 1-2 paragraphs instead of padding weaker items or reducing any story to a throwaway drive-by mention
 - Smooth transitions between stories: bridge them with a shared theme, a contrast, a question, or a one-line reaction to what came before - never jump abruptly into the next topic
 - Each story should explain what it is, why it matters, and share the interesting details
 - Close by stepping back to reflect on the episode as a whole - the range of topics, common threads, or a big-picture lesson - then a warm sign-off inviting them back. Don't list each story again; the listener just heard them.

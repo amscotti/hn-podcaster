@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { mapWithConcurrency } from "../lib/concurrency.ts";
 import {
   countDeliveryTags,
   countWords,
@@ -330,4 +331,115 @@ test("segment limit - OpenAI path stays under the 4096-char API cap", () => {
     // Oversized single paragraphs are kept whole, but these fit the limit.
     expect(segment.length).toBeLessThanOrEqual(OPENAI_TTS_MAX_CHARS);
   }
+});
+
+test("countDeliveryTags ignores arbitrary HTML and non-delivery brackets", () => {
+  expect(
+    countDeliveryTags(
+      "Quoted <em>emphasis</em>, <a href='x'>link</a>, <br>, and [sic] stay zero.",
+    ),
+  ).toBe(0);
+  expect(
+    countDeliveryTags(
+      "Real [pause] and <em>html</em> and <soft>warm</soft> plus [sic] count as two.",
+    ),
+  ).toBe(2);
+  // 2 valid tags + quoted HTML still passes MAX_TAGS_PER_PARAGRAPH in validation.
+  const original = "one two three four five six seven eight nine ten.";
+  const ok = validateEditedScript(original, [
+    "one two [pause] <em>three</em> <br> [sic] four five six seven eight <soft>nine</soft> ten.",
+  ]);
+  expect(ok.valid).toBe(true);
+});
+
+test("ScriptEditState drops bare [Pn] markers before empty-paragraph checks", () => {
+  const state = new ScriptEditState("First.\n\nSecond.");
+  expect(state.replace(1, "[P1]   ").ok).toBe(false);
+  expect(state.insertAfter(1, "[P2]\t").ok).toBe(false);
+  expect(state.paragraphs).toEqual(["First.", "Second."]);
+
+  const mixed = state.replace(1, "[P1]\n\nReal replacement.");
+  expect(mixed.ok).toBe(true);
+  expect(state.paragraphs).toEqual(["Real replacement.", "Second."]);
+});
+
+test("validateEditedScript rejects invalid delivery tags when xaiTagsAllowed is set", () => {
+  const original = "one two three four five six seven eight nine ten.";
+  const bannedXai = validateEditedScript(
+    original,
+    ["one two three four [giggle] five six seven eight nine ten."],
+    { xaiTagsAllowed: true },
+  );
+  expect(bannedXai.valid).toBe(false);
+  expect(
+    bannedXai.issues.some((issue) => issue.includes("invalid delivery tags")),
+  ).toBe(true);
+
+  const validXai = validateEditedScript(
+    original,
+    ["one two three four [pause] five six seven eight nine ten."],
+    { xaiTagsAllowed: true },
+  );
+  expect(validXai.valid).toBe(true);
+
+  const openaiRejectsAll = validateEditedScript(
+    original,
+    ["one two three four [pause] five six seven eight nine ten."],
+    { xaiTagsAllowed: false },
+  );
+  expect(openaiRejectsAll.valid).toBe(false);
+  expect(
+    openaiRejectsAll.issues.some((issue) =>
+      issue.includes("invalid delivery tags"),
+    ),
+  ).toBe(true);
+});
+
+test("segmentParagraphsForTts throws RangeError on non-positive or non-finite maxChars", () => {
+  expect(() => segmentParagraphsForTts(["hello"], { maxChars: 0 })).toThrow(
+    RangeError,
+  );
+  expect(() => segmentParagraphsForTts(["hello"], { maxChars: -10 })).toThrow(
+    RangeError,
+  );
+  expect(() =>
+    segmentParagraphsForTts(["hello"], { maxChars: Number.NaN }),
+  ).toThrow(RangeError);
+  expect(() =>
+    segmentParagraphsForTts(["hello"], { maxChars: Number.POSITIVE_INFINITY }),
+  ).toThrow(RangeError);
+});
+
+test("mapWithConcurrency fails fast without launching remaining items", async () => {
+  const launched: number[] = [];
+  const items = [0, 1, 2, 3, 4, 5, 6, 7];
+  const err = await mapWithConcurrency(items, 2, async (item) => {
+    launched.push(item);
+    if (item === 0) {
+      await Bun.sleep(5);
+      throw new Error("boom");
+    }
+    await Bun.sleep(20);
+    return item;
+  }).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toBe("boom");
+  // Wait for the other in-flight worker (item 1) to finish; it must NOT start item 2+.
+  await Bun.sleep(30);
+  expect(launched).toEqual([0, 1]);
+});
+
+test("mapWithConcurrency sanitizes NaN and non-positive concurrency to 1", async () => {
+  const nanOut = await mapWithConcurrency(
+    [1, 2, 3],
+    Number.NaN,
+    async (x) => x * 10,
+  );
+  expect(nanOut).toEqual([10, 20, 30]);
+
+  const zeroOut = await mapWithConcurrency([1, 2, 3], 0, async (x) => x + 1);
+  expect(zeroOut).toEqual([2, 3, 4]);
+
+  const negOut = await mapWithConcurrency([1, 2], -3, async (x) => x + 2);
+  expect(negOut).toEqual([3, 4]);
 });

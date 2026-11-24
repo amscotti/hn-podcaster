@@ -12,6 +12,10 @@ test("formatStoryContent - omits raw article body and comments", () => {
   );
 
   expect(formatted).toContain("## Cool Project Ships");
+  expect(formatted).toContain("Posted Date: Tuesday, November 14");
+  expect(formatted).not.toContain("2023");
+  expect(formatted).not.toMatch(/\d{1,2}:\d{2}/);
+  expect(formatted).not.toMatch(/\b(UTC|GMT)\b/);
   expect(formatted).toContain("URL: https://example.com/post");
   expect(formatted).toContain("Talking point: the launch matters because X.");
   expect(formatted).toContain("### Summary and Talking Points");

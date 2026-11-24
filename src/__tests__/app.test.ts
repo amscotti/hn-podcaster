@@ -105,3 +105,16 @@ test("main - success status without result exits 1 and reports failure", async (
     cap.restore();
   }
 });
+
+test("main - thrown error is caught and returns 1", async () => {
+  const cap = captureConsole();
+  try {
+    const code = await main(async () => {
+      throw new Error("workflow exploded");
+    });
+    expect(code).toBe(1);
+    expect(cap.logs.join("\n")).not.toContain("Podcast generation complete");
+  } finally {
+    cap.restore();
+  }
+});

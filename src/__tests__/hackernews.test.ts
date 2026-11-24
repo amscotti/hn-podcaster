@@ -1,13 +1,14 @@
 import { expect, test } from "bun:test";
 import {
+  COMMENT_FETCH_CONCURRENCY,
   fetchComments,
   fetchStory,
   fetchTopStories,
   isStoryWithUrl,
-  selectStoriesWithUrls,
+  type Story,
   StorySchema,
   StoryWithUrlSchema,
-  type Story,
+  selectStoriesWithUrls,
 } from "../lib/hackernews.ts";
 
 type FetchStub = (
@@ -401,4 +402,153 @@ test("Story schema - runtime guard accepts link stories, rejects bad items", () 
   // Failed fetch payloads must not pass as stories.
   expect(StorySchema.safeParse(null).success).toBe(false);
   expect(StorySchema.safeParse("x").success).toBe(false);
+});
+
+test("isStoryWithUrl - rejects non-http(s) and malformed URL schemes", () => {
+  const base: Story = {
+    id: 1,
+    title: "Scheme test",
+    score: 10,
+    by: "u",
+    time: 1,
+    type: "story",
+  };
+  expect(isStoryWithUrl({ ...base, url: "http://example.com/post" })).toBe(
+    true,
+  );
+  expect(isStoryWithUrl({ ...base, url: "HTTPS://example.com/post" })).toBe(
+    true,
+  );
+  expect(isStoryWithUrl({ ...base, url: "javascript:alert(1)" })).toBe(false);
+  expect(isStoryWithUrl({ ...base, url: "ftp://example.com/file" })).toBe(
+    false,
+  );
+  expect(isStoryWithUrl({ ...base, url: "data:text/html,hi" })).toBe(false);
+  expect(isStoryWithUrl({ ...base, url: "file:///etc/passwd" })).toBe(false);
+  expect(isStoryWithUrl({ ...base, url: "not a url" })).toBe(false);
+  expect(isStoryWithUrl({ ...base, url: "" })).toBe(false);
+});
+
+test("fetchComments - filters dead/deleted items even with text and soft-skips malformed siblings", async () => {
+  const originalFetch = globalThis.fetch;
+  stubFetch((input) => {
+    const url = String(input);
+    const id = Number(url.match(/item\/(\d+)/)?.[1]);
+    const bodies: Record<number, unknown> = {
+      1: {
+        id: 1,
+        type: "comment",
+        by: "alice",
+        text: "Valid first",
+        time: 1,
+      },
+      2: {
+        id: 2,
+        type: "comment",
+        by: "spammer",
+        text: "Killed comment that still carries text",
+        dead: true,
+        time: 2,
+      },
+      3: {
+        id: 3,
+        type: "comment",
+        by: "ghost",
+        text: "Deleted comment that still carries text",
+        deleted: true,
+        time: 3,
+      },
+      4: {
+        // Malformed: missing required numeric id and time
+        type: "comment",
+        text: "Broken schema item",
+      },
+      5: {
+        id: 5,
+        type: "comment",
+        by: "bob",
+        text: "Valid second",
+        time: 5,
+      },
+    };
+    return Promise.resolve(
+      new Response(JSON.stringify(bodies[id] ?? null), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  });
+  try {
+    const comments = await fetchComments([1, 2, 3, 4, 5], 10);
+    expect(comments.map((c) => c.id)).toEqual([1, 5]);
+    expect(comments.map((c) => c.text)).toEqual([
+      "Valid first",
+      "Valid second",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchComments - bounds concurrent fetches and preserves order", async () => {
+  const originalFetch = globalThis.fetch;
+  let inFlight = 0;
+  let maxInFlight = 0;
+  stubFetch(async (input) => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    const id = Number(String(input).match(/item\/(\d+)/)?.[1]);
+    await Bun.sleep(5);
+    inFlight--;
+    return new Response(
+      JSON.stringify({
+        id,
+        type: "comment",
+        by: `user${id}`,
+        text: `Comment ${id}`,
+        time: id,
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  });
+  try {
+    const ids = Array.from({ length: 25 }, (_, i) => i + 1);
+    const comments = await fetchComments(ids, 25);
+    expect(comments.map((c) => c.id)).toEqual(ids);
+    expect(maxInFlight).toBeLessThanOrEqual(COMMENT_FETCH_CONCURRENCY);
+    expect(maxInFlight).toBeGreaterThan(1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("HN fetchers - cancel response body on non-ok HTTP responses", async () => {
+  const originalFetch = globalThis.fetch;
+  let cancelCount = 0;
+  const makeErrorResponse = (): Response => {
+    const body = new ReadableStream<Uint8Array>({
+      start() {
+        // Stalled error body until canceled
+      },
+      cancel() {
+        cancelCount++;
+      },
+    });
+    return new Response(body, { status: 503, statusText: "Unavailable" });
+  };
+
+  stubFetch(() => Promise.resolve(makeErrorResponse()));
+  try {
+    await fetchTopStories().catch(() => {});
+    expect(cancelCount).toBe(1);
+
+    const story = await fetchStory(42);
+    expect(story).toBeNull();
+    expect(cancelCount).toBe(2);
+
+    const comments = await fetchComments([101, 102], 2);
+    expect(comments).toEqual([]);
+    expect(cancelCount).toBe(4);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

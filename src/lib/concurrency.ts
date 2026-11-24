@@ -12,13 +12,24 @@ export async function mapWithConcurrency<T, R>(
   concurrency: number,
   worker: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
+  if (items.length === 0) return [];
   const results: R[] = new Array(items.length);
+  const safeConcurrency =
+    Number.isFinite(concurrency) && concurrency >= 1
+      ? Math.floor(concurrency)
+      : 1;
+  const limit = Math.min(safeConcurrency, items.length);
   let next = 0;
-  const limit = Math.max(1, Math.min(concurrency, items.length || 1));
+  let failed = false;
   const runners = Array.from({ length: limit }, async () => {
-    while (next < items.length) {
+    while (!failed && next < items.length) {
       const index = next++;
-      results[index] = await worker(items[index], index);
+      try {
+        results[index] = await worker(items[index], index);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   });
   await Promise.all(runners);

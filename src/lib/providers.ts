@@ -3,9 +3,12 @@
  * Uses centralized config for provider selection and API keys.
  */
 
-import { type AIProvider, config } from "./config.ts";
-import { XaiVoice } from "./xai-voice.ts";
 import { OpenAIVoice } from "@mastra/voice-openai";
+import { type AIProvider, type Config, config } from "./config.ts";
+import { getAppLogger } from "./logger.ts";
+import { XaiVoice } from "./xai-voice.ts";
+
+const logger = getAppLogger("providers");
 
 // Model mappings per provider. grok-4.7 is a slow reasoning model
 // (measured Oct 2026: 26-33s even on trivial structured calls, 146s for
@@ -14,8 +17,10 @@ import { OpenAIVoice } from "@mastra/voice-openai";
 // uses windowed suggestion passes plus paragraph-level tool edits
 // (see podcast-generation workflow). Do not reintroduce whole-episode
 // mega-calls on this model; they exceed the ~300s per-request ceiling.
-// OpenAI mapping verified Nov 2026: summary gpt-6-luna (cheap/fast for
-// per-story summaries), main gpt-6.1-sol (mid-tier for the script).
+// OpenAI mapping updated Nov 2026 from OpenAI docs/model catalog (not yet
+// live-verified locally with an OpenAI API key): summary gpt-6-luna
+// (cheap/fast for per-story summaries), main gpt-6.1-sol (mid-tier for
+// the script).
 const AI_PROVIDER_MODELS: Record<
   AIProvider,
   { summary: string; main: string }
@@ -39,12 +44,15 @@ const OPENAI_VOICE_CONFIG = {
 /**
  * Get model config for Mastra agents
  */
-export function getAgentModelConfig(type: "summary" | "main"): {
+export function getAgentModelConfig(
+  type: "summary" | "main",
+  cfg: Config = config,
+): {
   id: `${string}/${string}`;
   apiKey: string;
 } {
-  const provider = config.aiProvider;
-  const apiKey = config.apiKeys[provider];
+  const provider = cfg.aiProvider;
+  const apiKey = cfg.apiKeys[provider];
 
   if (!apiKey) {
     throw new Error(`API key required for ${provider} provider`);
@@ -85,48 +93,62 @@ export interface VoiceProviderHandle {
   speakOptions: Record<string, unknown>;
 }
 
-/** Startup warning fires once even if the provider is created repeatedly. */
+/** Startup warnings fire once even if the provider is created repeatedly. */
 let warnedIgnoredSpeed = false;
+let warnedOpenAIDeprecation = false;
+
+/** Reset one-time warning guards (for tests). */
+export function resetVoiceProviderWarnings(): void {
+  warnedIgnoredSpeed = false;
+  warnedOpenAIDeprecation = false;
+}
 
 /**
  * Create the configured voice provider for TTS.
  * Supports xAI (default) and OpenAI via VOICE_PROVIDER.
  */
-export function createVoiceProvider(): VoiceProviderHandle {
-  switch (config.voiceProvider) {
+export function createVoiceProvider(cfg: Config = config): VoiceProviderHandle {
+  switch (cfg.voiceProvider) {
     case "xai": {
-      const apiKey = config.apiKeys.xai;
+      const apiKey = cfg.apiKeys.xai;
       if (!apiKey) {
         throw new Error("XAI_API_KEY is required for the xAI voice provider");
       }
       const voice = new XaiVoice({
         apiKey,
-        speaker: config.xaiVoiceId,
-        language: config.xaiVoiceLanguage,
-        speed: config.xaiVoiceSpeed,
+        speaker: cfg.xaiVoiceId,
+        language: cfg.xaiVoiceLanguage,
+        speed: cfg.xaiVoiceSpeed,
       });
       // xAI TTS has no "instructions"/persona prompt; speed is the main knob.
       return { voice, speakOptions: {} };
     }
-    default: {
-      const apiKey = config.apiKeys.openai;
+    case "openai": {
+      const apiKey = cfg.apiKeys.openai;
       if (!apiKey) {
         throw new Error(
           "OPENAI_API_KEY is required for the OpenAI voice provider",
         );
       }
-      if (config.xaiVoiceSpeed !== 1 && !warnedIgnoredSpeed) {
+      if (!warnedOpenAIDeprecation) {
+        warnedOpenAIDeprecation = true;
+        logger.warn`OpenAI voice model ${OPENAI_VOICE_CONFIG.model} shuts down on 2027-01-06; consider switching to VOICE_PROVIDER=xai or migrating to the Realtime API before shutdown`;
+      }
+      if (cfg.xaiVoiceSpeedExplicit && !warnedIgnoredSpeed) {
         warnedIgnoredSpeed = true;
-        console.warn(
-          `XAI_VOICE_SPEED=${config.xaiVoiceSpeed} is ignored by the OpenAI voice path (speed is an xAI-only knob)`,
-        );
+        logger.warn`XAI_VOICE_SPEED=${cfg.xaiVoiceSpeed} is ignored by the OpenAI voice path (speed is an xAI-only knob)`;
       }
       // Note: Mastra voice-openai types only list tts-1/tts-1-hd, but
-      // gpt-4o-mini-tts works at runtime via OpenAI's API
+      // gpt-4o-mini-tts works at runtime via OpenAI's API. Pass listeningModel
+      // apiKey too so OpenAIVoice does not fall back to process.env.OPENAI_API_KEY.
       const voice = new OpenAIVoice({
         speechModel: {
           // biome-ignore lint/suspicious/noExplicitAny: shipped types omit gpt-4o-mini-tts (see above)
           name: OPENAI_VOICE_CONFIG.model as any,
+          apiKey,
+        },
+        listeningModel: {
+          name: "whisper-1",
           apiKey,
         },
         speaker: OPENAI_VOICE_CONFIG.speaker,
@@ -135,6 +157,10 @@ export function createVoiceProvider(): VoiceProviderHandle {
         voice,
         speakOptions: { instructions: OPENAI_VOICE_CONFIG.instructions },
       };
+    }
+    default: {
+      const exhaustive: never = cfg.voiceProvider;
+      throw new Error(`Unsupported voice provider: ${String(exhaustive)}`);
     }
   }
 }
@@ -149,8 +175,8 @@ export function createVoiceProvider(): VoiceProviderHandle {
  * Returns instructions the script-writing agents can follow, or an empty
  * string when tags are unsupported (so prompts stay unchanged).
  */
-export function getSpeechTagGuidance(): string {
-  if (config.voiceProvider !== "xai") return "";
+export function getSpeechTagGuidance(cfg: Config = config): string {
+  if (cfg.voiceProvider !== "xai") return "";
 
   return `
 Delivery tags and vocal performance (IMPORTANT - punctuation and rhythm do most of the work; tags are accents, not wallpaper):

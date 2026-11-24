@@ -64,11 +64,40 @@ test("fetchWithTimeout - aborts stalled body after timeout", async () => {
     return Promise.resolve(new Response(body, { status: 200 }));
   });
   try {
-    // Headers arrive fine; body read should time out
+    // Headers arrive fine; body read should time out as a TypeError matching JSDoc
     const res = await fetchWithTimeout("https://example.com/stall", {}, 50);
     const err = await res.text().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as Error).message).toContain("timed out");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchWithTimeout - body-phase caller abort is not converted to timeout TypeError", async () => {
+  const originalFetch = globalThis.fetch;
+  stubFetch((_input, init) => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        init?.signal?.addEventListener("abort", () => {
+          controller.error(new DOMException("Aborted", "AbortError"));
+        });
+      },
+    });
+    return Promise.resolve(new Response(body, { status: 200 }));
+  });
+  const caller = new AbortController();
+  try {
+    const res = await fetchWithTimeout(
+      "https://example.com/stall",
+      { signal: caller.signal },
+      5_000,
+    );
+    const textPromise = res.text().catch((e: unknown) => e);
+    caller.abort();
+    const err = await textPromise;
     expect(err).toBeInstanceOf(DOMException);
-    expect((err as Error).message).toContain("Aborted");
+    expect((err as DOMException).name).toBe("AbortError");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -120,6 +149,40 @@ test("fetchWithTimeout - timeout still applies when caller signal provided", asy
     ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TypeError);
     expect((err as Error).message).toContain("timed out");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchWithTimeout - simultaneous caller abort and timeout preserves caller AbortError", async () => {
+  const originalFetch = globalThis.fetch;
+  // Delay rejection slightly past the timeout so both init.signal.aborted and
+  // timedOut are true when fetch rejects, reproducing the simultaneous race.
+  stubFetch((_input, init) => {
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        "abort",
+        () => {
+          setTimeout(
+            () => reject(new DOMException("Aborted", "AbortError")),
+            30,
+          );
+        },
+        { once: true },
+      );
+    });
+  });
+  const caller = new AbortController();
+  try {
+    const promise = fetchWithTimeout(
+      "https://example.com/race",
+      { signal: caller.signal },
+      10,
+    );
+    caller.abort();
+    const err = await promise.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DOMException);
+    expect((err as DOMException).name).toBe("AbortError");
   } finally {
     globalThis.fetch = originalFetch;
   }

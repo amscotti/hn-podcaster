@@ -35,22 +35,28 @@ export async function fetchWithTimeout(
   init: RequestInit = {},
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, timeoutMs);
   const signal = init.signal
-    ? AbortSignal.any([init.signal, controller.signal])
-    : controller.signal;
+    ? AbortSignal.any([init.signal, abortController.signal])
+    : abortController.signal;
+
+  const isTimeoutAbort = (error: unknown): boolean =>
+    timedOut &&
+    !init.signal?.aborted &&
+    error instanceof DOMException &&
+    error.name === "AbortError";
 
   let response: Response;
   try {
     response = await fetch(input, { ...init, signal });
   } catch (error) {
     clearTimeout(timer);
-    if (
-      controller.signal.aborted &&
-      error instanceof DOMException &&
-      error.name === "AbortError"
-    ) {
+    if (isTimeoutAbort(error)) {
       throw new TypeError(`Request timed out after ${timeoutMs}ms: ${input}`);
     }
     throw error;
@@ -64,22 +70,29 @@ export async function fetchWithTimeout(
 
   // Wrap the body so the timer is cleared on completion, error, or cancel —
   // a bare TransformStream only flushes on clean completion and would leak
-  // the timer on error. If the body stalls, the timer fires and aborts the
-  // controller, which errors the reader for the caller.
+  // the timer on error. If the body stalls, the timer fires and aborts
+  // abortController, which errors the reader and surfaces as a timeout
+  // TypeError for the caller.
   const reader = response.body.getReader();
   const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
+    async pull(streamController) {
       try {
         const { done, value } = await reader.read();
         if (done) {
           clearTimeout(timer);
-          controller.close();
+          streamController.close();
         } else {
-          controller.enqueue(value);
+          streamController.enqueue(value);
         }
       } catch (error) {
         clearTimeout(timer);
-        controller.error(error);
+        if (isTimeoutAbort(error)) {
+          streamController.error(
+            new TypeError(`Request timed out after ${timeoutMs}ms: ${input}`),
+          );
+        } else {
+          streamController.error(error);
+        }
       }
     },
     cancel(reason) {

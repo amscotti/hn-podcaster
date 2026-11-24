@@ -108,26 +108,26 @@ test("XaiVoice.speak - retries 429 honouring Retry-After", async () => {
   const originalFetch = globalThis.fetch;
   const originalSleep = Bun.sleep;
   const sleeps: number[] = [];
-  // @ts-expect-error probe: Bun.sleep is patched in tests to avoid real waits
-  Bun.sleep = (ms: number) => {
-    sleeps.push(ms);
-    return Promise.resolve();
-  };
   let calls = 0;
-  stubFetch(() => {
-    calls++;
-    if (calls === 1) {
-      return Promise.resolve(
-        new Response("rate limited", {
-          status: 429,
-          statusText: "Too Many Requests",
-          headers: { "Retry-After": "2" },
-        }),
-      );
-    }
-    return Promise.resolve(new Response("ok-after-429"));
-  });
   try {
+    // @ts-expect-error probe: Bun.sleep is patched in tests to avoid real waits
+    Bun.sleep = (ms: number) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    };
+    stubFetch(() => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response("rate limited", {
+            status: 429,
+            statusText: "Too Many Requests",
+            headers: { "Retry-After": "2" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("ok-after-429"));
+    });
     const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
     const stream = await voice.speak("Hello");
     expect(await readStreamText(stream)).toBe("ok-after-429");
@@ -191,26 +191,26 @@ test("XaiVoice.speak - caps Retry-After above 60s and falls back to backoff", as
   const originalFetch = globalThis.fetch;
   const originalSleep = Bun.sleep;
   const sleeps: number[] = [];
-  // @ts-expect-error probe: Bun.sleep is patched in tests to avoid real waits
-  Bun.sleep = (ms: number) => {
-    sleeps.push(ms);
-    return Promise.resolve();
-  };
   let calls = 0;
-  stubFetch(() => {
-    calls++;
-    if (calls === 1) {
-      return Promise.resolve(
-        new Response("rate limited", {
-          status: 429,
-          statusText: "Too Many Requests",
-          headers: { "Retry-After": "86400" },
-        }),
-      );
-    }
-    return Promise.resolve(new Response("ok-after-cap"));
-  });
   try {
+    // @ts-expect-error probe: Bun.sleep is patched in tests to avoid real waits
+    Bun.sleep = (ms: number) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    };
+    stubFetch(() => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response("rate limited", {
+            status: 429,
+            statusText: "Too Many Requests",
+            headers: { "Retry-After": "86400" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("ok-after-cap"));
+    });
     const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
     const stream = await voice.speak("Hello");
     expect(await readStreamText(stream)).toBe("ok-after-cap");
@@ -230,26 +230,26 @@ test("XaiVoice.speak - floors Retry-After 0 at 500ms", async () => {
   const originalFetch = globalThis.fetch;
   const originalSleep = Bun.sleep;
   const sleeps: number[] = [];
-  // @ts-expect-error probe: Bun.sleep is patched in tests to avoid real waits
-  Bun.sleep = (ms: number) => {
-    sleeps.push(ms);
-    return Promise.resolve();
-  };
   let calls = 0;
-  stubFetch(() => {
-    calls++;
-    if (calls === 1) {
-      return Promise.resolve(
-        new Response("rate limited", {
-          status: 429,
-          statusText: "Too Many Requests",
-          headers: { "Retry-After": "0" },
-        }),
-      );
-    }
-    return Promise.resolve(new Response("ok-floored"));
-  });
   try {
+    // @ts-expect-error probe: Bun.sleep is patched in tests to avoid real waits
+    Bun.sleep = (ms: number) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    };
+    stubFetch(() => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response("rate limited", {
+            status: 429,
+            statusText: "Too Many Requests",
+            headers: { "Retry-After": "0" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("ok-floored"));
+    });
     const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
     expect(await readStreamText(await voice.speak("Hello"))).toBe("ok-floored");
     expect(calls).toBe(2);
@@ -303,6 +303,173 @@ test("XaiVoice.speak - retries mid-body abort then succeeds", async () => {
     const stream = await voice.speak("Hello");
     expect(await readStreamText(stream)).toBe("recovered-bytes");
     expect(calls).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("XaiVoice.speak - sends expected URL, headers, and pinned output_format payload", async () => {
+  const originalFetch = globalThis.fetch;
+  let seenUrl = "";
+  let seenInit: RequestInit | undefined;
+  try {
+    stubFetch((input, init) => {
+      seenUrl = String(input);
+      seenInit = init;
+      return Promise.resolve(new Response("audio-bytes"));
+    });
+    const voice = new XaiVoice({
+      apiKey: "secret-xai-key",
+      speaker: "ara",
+      language: "en",
+      speed: 0.9,
+      retryBackoffMs: 1,
+    });
+    await voice.speak("Hello podcast", { speaker: "rex", speed: 1.1 });
+    expect(seenUrl).toBe("https://api.x.ai/v1/tts");
+    expect(seenInit?.method).toBe("POST");
+    const headers = seenInit?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer secret-xai-key");
+    expect(headers["Content-Type"]).toBe("application/json");
+    const body = JSON.parse(String(seenInit?.body));
+    expect(body).toEqual({
+      text: "Hello podcast",
+      voice_id: "rex",
+      language: "en",
+      speed: 1.1,
+      output_format: {
+        codec: "mp3",
+        sample_rate: 24000,
+        bit_rate: 128000,
+      },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("XaiVoice.speak - rejects text over 60,000 chars and retries 0-byte body", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    stubFetch(() => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response(new Uint8Array(0), { status: 200 }),
+        );
+      }
+      return Promise.resolve(new Response("non-empty-bytes"));
+    });
+    const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
+    const tooLongErr = await voice
+      .speak("a".repeat(60_001))
+      .catch((e: unknown) => e);
+    expect(tooLongErr).toBeInstanceOf(Error);
+    expect((tooLongErr as Error).message).toContain("60000");
+    expect(calls).toBe(0);
+
+    const stream = await voice.speak("short text");
+    expect(await readStreamText(stream)).toBe("non-empty-bytes");
+    expect(calls).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("XaiVoice.speak - honours Retry-After on 503 (seconds and HTTP-date)", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSleep = Bun.sleep;
+  const sleeps: number[] = [];
+  let calls = 0;
+  try {
+    // @ts-expect-error probe: Bun.sleep is patched in tests to avoid real waits
+    Bun.sleep = (ms: number) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    };
+    const futureDate = new Date(Date.now() + 4_000).toUTCString();
+    stubFetch(() => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response("busy", {
+            status: 503,
+            statusText: "Service Unavailable",
+            headers: { "Retry-After": "3" },
+          }),
+        );
+      }
+      if (calls === 2) {
+        return Promise.resolve(
+          new Response("still busy", {
+            status: 503,
+            statusText: "Service Unavailable",
+            headers: { "Retry-After": futureDate },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("ok-after-503"));
+    });
+    const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
+    const stream = await voice.speak("Hello");
+    expect(await readStreamText(stream)).toBe("ok-after-503");
+    expect(calls).toBe(3);
+    expect(sleeps[0]).toBe(3000);
+    // HTTP-date has 1-second resolution; allow a generous range around 4000ms.
+    expect(sleeps[1]).toBeGreaterThanOrEqual(2000);
+    expect(sleeps[1]).toBeLessThanOrEqual(5000);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Bun.sleep = originalSleep;
+  }
+});
+
+test("XaiVoice.speak - truncates oversized error body to 500 chars", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    const longDetail = `${"x".repeat(500)}SHOULD_BE_TRUNCATED${"y".repeat(200)}`;
+    stubFetch(() =>
+      Promise.resolve(
+        new Response(longDetail, { status: 400, statusText: "Bad Request" }),
+      ),
+    );
+    const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
+    const err = await voice.speak("Hello").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain("x".repeat(500));
+    expect(message).not.toContain("SHOULD_BE_TRUNCATED");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("XaiVoice.speak - decodes split multi-byte UTF-8 ReadableStream input cleanly", async () => {
+  const originalFetch = globalThis.fetch;
+  let sentText = "";
+  try {
+    stubFetch((_input, init) => {
+      sentText = JSON.parse(String(init?.body)).text;
+      return Promise.resolve(new Response("ok-utf8"));
+    });
+    const original = "Hello 🚀 café";
+    const encoded = new TextEncoder().encode(original);
+    // Split right through the middle of the 4-byte 🚀 emoji sequence.
+    const splitAt = encoded.indexOf(0xf0) + 2;
+    const streamInput = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoded.slice(0, splitAt));
+        controller.enqueue(encoded.slice(splitAt));
+        controller.close();
+      },
+    });
+    const voice = new XaiVoice({ apiKey: "test-key", retryBackoffMs: 1 });
+    // Runtime accepts ReadableStream even though the VoiceLike contract types string.
+    const res = await voice.speak(streamInput as unknown as string);
+    expect(await readStreamText(res)).toBe("ok-utf8");
+    expect(sentText).toBe(original);
+    expect(sentText).not.toContain("\uFFFD");
   } finally {
     globalThis.fetch = originalFetch;
   }

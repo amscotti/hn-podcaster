@@ -9,7 +9,7 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "check": "tsc --noEmit && biome lint . && biome format .",
+    "check": "tsc --noEmit && biome check .",
     "test": "bun test",
     "test:coverage": "bun test --coverage"
   },

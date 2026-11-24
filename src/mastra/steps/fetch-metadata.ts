@@ -1,8 +1,8 @@
 import { createStep } from "@mastra/core/workflows";
 import { z } from "zod";
 import {
-  selectStoriesWithUrls,
   StoryWithUrlSchema,
+  selectStoriesWithUrls,
 } from "../../lib/hackernews.ts";
 import { getAppLogger } from "../../lib/logger.ts";
 

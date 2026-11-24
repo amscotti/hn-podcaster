@@ -76,9 +76,22 @@ export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
+const ALLOWED_INLINE_TAG_SET = new Set<string>(ALLOWED_INLINE_TAGS);
+const OPENING_WRAPPING_TAG_PATTERN = new RegExp(
+  `<(${ALLOWED_WRAPPING_TAGS.join("|")})>`,
+  "g",
+);
+
 /** Count delivery-tag openings/inline tags in a script (closers excluded). */
 export function countDeliveryTags(text: string): number {
-  return text.match(/\[[a-z][a-z-]*\]|<[a-z][a-z-]*>/g)?.length ?? 0;
+  let count = 0;
+  for (const match of text.matchAll(/\[[a-z][a-z-]*\]/g)) {
+    if (ALLOWED_INLINE_TAG_SET.has(match[0])) count++;
+  }
+  for (const _ of text.matchAll(OPENING_WRAPPING_TAG_PATTERN)) {
+    count++;
+  }
+  return count;
 }
 
 /**
@@ -102,6 +115,11 @@ export interface TtsSegmentOptions {
  * boundary to use and is hard-split as the only fallback.
  */
 function splitOnWordBoundaries(text: string, maxChars: number): string[] {
+  if (!Number.isFinite(maxChars) || maxChars <= 0) {
+    throw new RangeError(
+      `maxChars must be a positive finite number, got ${maxChars}`,
+    );
+  }
   if (text.length <= maxChars) return [text];
   const words = text.split(/\s+/).filter(Boolean);
   const pieces: string[] = [];
@@ -141,6 +159,11 @@ export function segmentParagraphsForTts(
   options: TtsSegmentOptions = {},
 ): string[] {
   const maxChars = options.maxChars ?? XAI_TTS_MAX_CHARS;
+  if (!Number.isFinite(maxChars) || maxChars <= 0) {
+    throw new RangeError(
+      `maxChars must be a positive finite number, got ${maxChars}`,
+    );
+  }
   const maxParagraphs = options.maxParagraphs ?? 5;
   const expanded: string[] = [];
   for (const paragraph of paragraphs) {
@@ -182,7 +205,9 @@ function stripParagraphMarker(text: string): string {
 
 /** Normalize agent-supplied text into one or more clean paragraphs. */
 function normalizeParagraphInput(text: string): string[] {
-  return splitParagraphs(text).map(stripParagraphMarker);
+  return splitParagraphs(text)
+    .map((p) => stripParagraphMarker(p).trim())
+    .filter((p) => p.length > 0);
 }
 
 /**
@@ -346,6 +371,14 @@ export class ScriptEditState {
   }
 }
 
+export interface ValidateEditedScriptOptions {
+  /**
+   * When defined, also reject delivery tags unsupported by the active voice
+   * provider (guidance-banned tags when true; all delivery tags when false).
+   */
+  xaiTagsAllowed?: boolean;
+}
+
 /**
  * Validate an edited script before accepting it. Guards against an agent
  * gutting the episode, leaking prompt markers, emitting markdown
@@ -356,6 +389,7 @@ export class ScriptEditState {
 export function validateEditedScript(
   originalScript: string,
   editedParagraphs: string[],
+  options?: ValidateEditedScriptOptions,
 ): { valid: boolean; issues: string[] } {
   const issues: string[] = [];
 
@@ -375,6 +409,21 @@ export function validateEditedScript(
       );
     }
   });
+
+  if (options?.xaiTagsAllowed !== undefined) {
+    const invalidTags = new Set<string>();
+    for (const paragraph of editedParagraphs) {
+      for (const tag of findInvalidDeliveryTags(
+        paragraph,
+        options.xaiTagsAllowed,
+      )) {
+        invalidTags.add(tag);
+      }
+    }
+    if (invalidTags.size > 0) {
+      issues.push(`invalid delivery tags: ${[...invalidTags].join(", ")}`);
+    }
+  }
 
   const originalWords = countWords(originalScript);
   const editedWords = editedParagraphs.reduce(
@@ -415,7 +464,9 @@ export function validatePerformanceScript(
   editedParagraphs: string[],
   xaiTagsAllowed: boolean,
 ): { valid: boolean; issues: string[] } {
-  const base = validateEditedScript(originalScript, editedParagraphs);
+  const base = validateEditedScript(originalScript, editedParagraphs, {
+    xaiTagsAllowed,
+  });
   const issues = [...base.issues];
 
   const originalWords = countWords(originalScript);
@@ -430,14 +481,6 @@ export function validatePerformanceScript(
         `performance pass changed length too much (${originalWords} -> ${editedWords} words)`,
       );
     }
-  }
-
-  const invalidTags = findInvalidDeliveryTags(
-    joinParagraphs(editedParagraphs),
-    xaiTagsAllowed,
-  );
-  if (invalidTags.length > 0) {
-    issues.push(`invalid delivery tags: ${invalidTags.join(", ")}`);
   }
 
   return { valid: issues.length === 0, issues };

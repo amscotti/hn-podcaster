@@ -97,6 +97,10 @@ const ConfigSchema = z.object({
     .max(1.5)
     .default(0.9)
     .describe("xAI TTS speed multiplier (0.7-1.5; 0.9 measured calmer)"),
+  xaiVoiceSpeedExplicit: z
+    .boolean()
+    .default(false)
+    .describe("Whether XAI_VOICE_SPEED was explicitly set in the environment"),
 
   // Content fetching settings
   jinaApiKey: z
@@ -138,6 +142,20 @@ export function parseFloatEnv(name: string): number | undefined {
     throw new Error(`Invalid ${name}: "${value}" (expected a number)`);
   }
   return parsed;
+}
+
+/**
+ * Parse a boolean environment variable ("true" / "false", case-insensitive,
+ * trimmed). Unset or empty values default to false; any other value throws
+ * so a typo'd knob is never silently ignored.
+ */
+export function parseBoolEnv(name: string): boolean {
+  const value = Bun.env[name];
+  if (value === undefined) return false;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "" || normalized === "false") return false;
+  if (normalized === "true") return true;
+  throw new Error(`Invalid ${name}: "${value}" (expected "true" or "false")`);
 }
 
 /**
@@ -193,7 +211,7 @@ export function loadConfig(): Config {
   };
 
   // Check if audio generation is being skipped
-  const skipAudio = Bun.env.SKIP_AUDIO?.toLowerCase() === "true";
+  const skipAudio = parseBoolEnv("SKIP_AUDIO");
 
   // Resolve voice provider (validates VOICE_PROVIDER if set; defaults to xai)
   const voiceProvider = (() => {
@@ -219,7 +237,7 @@ export function loadConfig(): Config {
     }
     if (voiceProvider === "xai" && !apiKeys.xai) {
       throw new Error(
-        "XAI_API_KEY is required for xAI voice/TTS (or set SKIP_AUDIO=true)",
+        "XAI_API_KEY is required for xAI voice/TTS (or set VOICE_PROVIDER=openai with OPENAI_API_KEY, or SKIP_AUDIO=true)",
       );
     }
   }
@@ -236,6 +254,7 @@ export function loadConfig(): Config {
     );
   }
 
+  const xaiVoiceSpeedExplicit = Boolean(Bun.env.XAI_VOICE_SPEED?.trim());
   const rawConfig = {
     aiProvider,
     apiKeys,
@@ -249,6 +268,7 @@ export function loadConfig(): Config {
     xaiVoiceId: Bun.env.XAI_VOICE_ID,
     xaiVoiceLanguage: Bun.env.XAI_VOICE_LANGUAGE,
     xaiVoiceSpeed: parseFloatEnv("XAI_VOICE_SPEED"),
+    xaiVoiceSpeedExplicit,
     jinaApiKey: Bun.env.JINA_API_KEY,
   };
 

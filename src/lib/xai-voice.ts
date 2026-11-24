@@ -88,14 +88,16 @@ async function readInputStream(
   input: string | ReadableStream,
 ): Promise<string> {
   if (typeof input === "string") return input;
+  const decoder = new TextDecoder();
   let text = "";
   for await (const chunk of input as AsyncIterable<unknown>) {
     if (chunk instanceof Uint8Array) {
-      text += new TextDecoder().decode(chunk);
+      text += decoder.decode(chunk, { stream: true });
     } else if (typeof chunk === "string") {
       text += chunk;
     }
   }
+  text += decoder.decode();
   return text;
 }
 
@@ -261,7 +263,7 @@ export class XaiVoice extends MastraVoice<unknown, XaiSpeakOptions, never> {
       }
 
       const retryAfterMs = parseRetryAfter(response.headers.get("Retry-After"));
-      const detail = await response.text().catch(() => "");
+      const detail = (await response.text().catch(() => "")).slice(0, 500);
       lastError = new Error(
         `xAI TTS request failed: ${response.status} ${response.statusText}${
           detail ? ` - ${detail}` : ""
@@ -270,7 +272,10 @@ export class XaiVoice extends MastraVoice<unknown, XaiSpeakOptions, never> {
       const retryable = response.status === 429 || response.status >= 500;
       if (attempt < maxAttempts - 1 && retryable) {
         let delay: number;
-        if (response.status === 429 && retryAfterMs !== undefined) {
+        if (
+          (response.status === 429 || response.status === 503) &&
+          retryAfterMs !== undefined
+        ) {
           if (retryAfterMs > MAX_RETRY_AFTER_MS) {
             logger.warn`xAI TTS Retry-After ${retryAfterMs}ms exceeds ${MAX_RETRY_AFTER_MS}ms cap; falling back to backoff`;
             delay = backoffDelay(attempt);
