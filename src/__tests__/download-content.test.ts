@@ -363,3 +363,103 @@ test("downloadContentStep fetches HN comments only for final kept stories", asyn
     globalThis.fetch = originalFetch;
   }
 });
+
+test("fetchArticleText - falls back to Jina on HTTP 200 empty-text HTML SPA shell", async () => {
+  const originalFetch = globalThis.fetch;
+  const spaShell =
+    '<!doctype html><html><head><title>App</title></head><body><div id="root"></div><script src="/bundle.js"></script></body></html>';
+
+  // 1. With jinaApiKey -> falls back to Jina
+  const seenWithKey: string[] = [];
+  stubFetch((input) => {
+    const url = String(input);
+    seenWithKey.push(url);
+    if (url.startsWith("https://r.jina.ai/")) {
+      return Promise.resolve(new Response("Rendered SPA article content."));
+    }
+    return Promise.resolve(
+      new Response(spaShell, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      }),
+    );
+  });
+  try {
+    const text = await fetchArticleText(
+      "https://example.com/spa",
+      "test-jina-key",
+    );
+    expect(text).toBe("Rendered SPA article content.");
+    expect(seenWithKey).toEqual([
+      "https://example.com/spa",
+      "https://r.jina.ai/https://example.com/spa",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 2. Without jinaApiKey -> returns empty string without calling Jina
+  const seenWithoutKey: string[] = [];
+  stubFetch((input) => {
+    seenWithoutKey.push(String(input));
+    return Promise.resolve(
+      new Response(spaShell, {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      }),
+    );
+  });
+  try {
+    const text = await fetchArticleText("https://example.com/spa", undefined);
+    expect(text.trim()).toBe("");
+    expect(seenWithoutKey).toEqual(["https://example.com/spa"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 3. Empty non-HTML binary response does NOT trigger Jina fallback
+  const seenBinary: string[] = [];
+  stubFetch((input) => {
+    seenBinary.push(String(input));
+    return Promise.resolve(
+      new Response(new Uint8Array(0), {
+        status: 200,
+        headers: { "Content-Type": "application/octet-stream" },
+      }),
+    );
+  });
+  try {
+    const text = await fetchArticleText(
+      "https://example.com/blob",
+      "test-jina-key",
+    );
+    expect(text).toBe("");
+    expect(seenBinary).toEqual(["https://example.com/blob"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // 4. Blank PDF (no text layer) does NOT trigger Jina fallback
+  const emptyPdf =
+    "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
+  const seenPdf: string[] = [];
+  stubFetch((input) => {
+    seenPdf.push(String(input));
+    return Promise.resolve(
+      new Response(emptyPdf, {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      }),
+    );
+  });
+  try {
+    const text = await fetchArticleText(
+      "https://example.com/scan.pdf",
+      "test-jina-key",
+    );
+    expect(text.trim()).toBe("");
+    expect(seenPdf).toEqual(["https://example.com/scan.pdf"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

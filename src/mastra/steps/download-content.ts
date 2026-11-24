@@ -189,17 +189,31 @@ function isTransient(error: unknown, status: number): boolean {
 }
 
 /**
- * Download a URL and extract its text, auto-detecting PDF vs HTML by content
- * rather than URL extension. This handles cases where a `.pdf` URL serves an
- * HTML error/redirect page, or a non-`.pdf` URL serves a PDF. Transient
- * failures (network errors, 5xx) are retried with backoff so a single hiccup
- * doesn't drop a story from the podcast.
+ * Whether a non-PDF response represents an HTML document (and thus a candidate
+ * for Jina JS rendering when direct HTML extraction yields empty text).
  */
-export async function downloadAndExtract(
+function isHtmlResponse(response: Response, rawText: string): boolean {
+  const contentType = (
+    response.headers.get("content-type") ?? ""
+  ).toLowerCase();
+  if (
+    contentType.includes("text/html") ||
+    contentType.includes("application/xhtml+xml")
+  ) {
+    return true;
+  }
+  if (contentType !== "" && !contentType.startsWith("text/plain")) {
+    return false;
+  }
+  return /<(?:!doctype\s+html|html|head|body|div|script)\b/i.test(rawText);
+}
+
+/** Internal download + extraction returning content kind for SPA fallback. */
+async function downloadAndExtractInternal(
   url: string,
   retries = 2,
   backoffMs = 500,
-): Promise<string> {
+): Promise<{ text: string; isHtml: boolean }> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -213,9 +227,15 @@ export async function downloadAndExtract(
         throw new HttpStatusError(response.status, response.statusText);
       }
       const buffer = await readBodyWithCap(response, url);
-      return isPdfBuffer(buffer)
-        ? await extractPdfText(buffer)
-        : extractHtmlText(buffer);
+      if (isPdfBuffer(buffer)) {
+        return { text: await extractPdfText(buffer), isHtml: false };
+      }
+      const rawText = new TextDecoder().decode(buffer);
+      const isHtml = isHtmlResponse(response, rawText);
+      return {
+        text: convert(rawText, { wordwrap: 130 }),
+        isHtml,
+      };
     } catch (error) {
       lastError = error;
       const status = error instanceof HttpStatusError ? error.status : 0;
@@ -227,6 +247,22 @@ export async function downloadAndExtract(
     }
   }
   throw lastError;
+}
+
+/**
+ * Download a URL and extract its text, auto-detecting PDF vs HTML by content
+ * rather than URL extension. This handles cases where a `.pdf` URL serves an
+ * HTML error/redirect page, or a non-`.pdf` URL serves a PDF. Transient
+ * failures (network errors, 5xx) are retried with backoff so a single hiccup
+ * doesn't drop a story from the podcast.
+ */
+export async function downloadAndExtract(
+  url: string,
+  retries = 2,
+  backoffMs = 500,
+): Promise<string> {
+  const { text } = await downloadAndExtractInternal(url, retries, backoffMs);
+  return text;
 }
 
 /**
@@ -272,15 +308,17 @@ export async function fetchViaJina(
 
 /**
  * Fetch an article's text with a fallback chain: try directly first (fast,
- * free), and if that fails fall back to the Jina reader proxy when configured.
- * This rescues articles behind bot detection that our direct fetch can't reach.
+ * free), and if that fails — or if an HTTP 200 HTML response yields empty
+ * extracted text (e.g. a JS-only SPA shell) — fall back to the Jina reader
+ * proxy when configured.
  */
 export async function fetchArticleText(
   url: string,
   jinaApiKey: string | undefined,
 ): Promise<string> {
+  let direct: { text: string; isHtml: boolean };
   try {
-    return await downloadAndExtract(url);
+    direct = await downloadAndExtractInternal(url);
   } catch (directError) {
     if (!jinaApiKey) throw directError;
     logger.debug`Direct fetch failed; trying Jina reader: ${summarizeError(
@@ -290,6 +328,15 @@ export async function fetchArticleText(
     logger.info`Fetched via Jina reader after direct failure (${text.length} chars)`;
     return text;
   }
+
+  if (direct.isHtml && direct.text.trim().length === 0 && jinaApiKey) {
+    logger.debug`Direct HTML fetch returned empty text (possible JS-only SPA); trying Jina reader: ${url}`;
+    const rendered = await fetchViaJina(url, jinaApiKey);
+    logger.info`Fetched via Jina reader after empty HTML response (${rendered.length} chars)`;
+    return rendered;
+  }
+
+  return direct.text;
 }
 
 /**

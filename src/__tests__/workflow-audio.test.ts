@@ -18,6 +18,7 @@ import {
 } from "../mastra/steps/download-content.ts";
 import {
   buildAudioSegments,
+  DEFAULT_LLM_TIMEOUT_MS,
   deterministicSuggestions,
   directPerformanceStep,
   fenceUntrusted,
@@ -25,9 +26,11 @@ import {
   generateSummariesStep,
   LONG_PAUSE_PREFIX,
   MAX_COMMENTS_INPUT_CHARS,
+  MAX_PERFORMANCE_EDITS,
   PERFORMANCE_WINDOW_CONCURRENCY,
   SUGGESTION_CONCURRENCY,
   SUMMARY_CONCURRENCY,
+  takeRoundRobin,
 } from "../mastra/workflows/podcast-generation.ts";
 
 test("buildAudioSegments - throws on empty script instead of empty MP3", () => {
@@ -439,10 +442,13 @@ test("fenceUntrusted neutralizes delimiter breakout and generateSummariesStep ca
 
   const origGenerate = summaryAgent.generate;
   let capturedPrompt = "";
+  let capturedOptions: unknown;
   (summaryAgent as unknown as { generate: unknown }).generate = async (
     prompt: string,
+    options?: unknown,
   ) => {
     capturedPrompt = prompt;
+    capturedOptions = options;
     return { text: "summary" };
   };
   try {
@@ -469,7 +475,124 @@ test("fenceUntrusted neutralizes delimiter breakout and generateSummariesStep ca
     expect(capturedPrompt).toContain(
       `[truncated at ${MAX_COMMENTS_INPUT_CHARS} chars]`,
     );
+    expect(
+      (
+        capturedOptions as {
+          modelSettings?: { timeout?: { totalMs?: number; stepMs?: number } };
+        }
+      )?.modelSettings?.timeout,
+    ).toEqual({
+      totalMs: DEFAULT_LLM_TIMEOUT_MS,
+      stepMs: DEFAULT_LLM_TIMEOUT_MS,
+    });
   } finally {
     (summaryAgent as unknown as { generate: unknown }).generate = origGenerate;
+  }
+});
+
+test("takeRoundRobin distributes evenly across buckets and handles edge cases", () => {
+  expect(
+    takeRoundRobin(
+      [
+        ["a1", "a2", "a3"],
+        ["b1", "b2", "b3"],
+        ["c1", "c2", "c3"],
+      ],
+      5,
+    ),
+  ).toEqual(["a1", "b1", "c1", "a2", "b2"]);
+
+  // Preserves order within each bucket and skips empty buckets without starving later ones
+  expect(takeRoundRobin([[], ["b1", "b2"], [], ["d1"]], 10)).toEqual([
+    "b1",
+    "d1",
+    "b2",
+  ]);
+
+  // Empty inputs and non-positive limits
+  expect(takeRoundRobin([], 5)).toEqual([]);
+  expect(takeRoundRobin([[], []], 5)).toEqual([]);
+  expect(takeRoundRobin([["a1"], ["b1"]], 0)).toEqual([]);
+  expect(takeRoundRobin([["a1"], ["b1"]], -3)).toEqual([]);
+});
+
+test("directPerformanceStep caps edits round-robin across windows without starving later windows", async () => {
+  const origGenerate = performanceDirectorAgent.generate;
+  const origVoiceProvider = config.voiceProvider;
+  config.voiceProvider = "xai";
+
+  // 40 paragraphs = 10 windows of 4 paragraphs each.
+  const paragraphs = Array.from(
+    { length: 40 },
+    (_v, i) =>
+      `Paragraph number ${i + 1} has plenty of ordinary spoken words to stay well inside the validation ratio band.`,
+  );
+  const script = paragraphs.join("\n\n");
+
+  const capturedTimeouts: unknown[] = [];
+  (performanceDirectorAgent as unknown as { generate: unknown }).generate =
+    async (prompt: string, options?: unknown) => {
+      capturedTimeouts.push(
+        (
+          options as {
+            modelSettings?: { timeout?: { totalMs?: number; stepMs?: number } };
+          }
+        )?.modelSettings?.timeout,
+      );
+      const match = prompt.match(/ONLY paragraphs P(\d+)-P(\d+)/);
+      const start = Number(match?.[1] ?? 1);
+      // Every window proposes 2 valid edits (20 total across 10 windows > MAX_PERFORMANCE_EDITS = 14).
+      return {
+        object: {
+          edits: [
+            {
+              paragraphId: start,
+              text: `Paragraph number ${start} has plenty of ordinary spoken words — [pause] to stay well inside the validation ratio band.`,
+              reason: "rhythm",
+            },
+            {
+              paragraphId: start + 1,
+              text: `Paragraph number ${start + 1} has plenty of ordinary spoken words — [pause] to stay well inside the validation ratio band.`,
+              reason: "rhythm",
+            },
+          ],
+        },
+      };
+    };
+
+  try {
+    const execute = directPerformanceStep.execute as unknown as (
+      args: unknown,
+    ) => Promise<{ script: string }>;
+    const out = await execute({
+      inputData: {
+        script,
+        summaries: ["## Story One\nSummary"],
+        iterationCount: 1,
+      },
+    });
+    const outParagraphs = out.script.split("\n\n");
+    expect(outParagraphs.length).toBe(40);
+    const editedIds = outParagraphs
+      .map((p, idx) => (p.includes("[pause]") ? idx + 1 : 0))
+      .filter((id) => id > 0);
+    expect(editedIds.length).toBe(MAX_PERFORMANCE_EDITS);
+    // Round 0 takes the first edit of all 10 windows (1, 5, 9, ..., 37);
+    // Round 1 takes the second edit of windows 1..4 (2, 6, 10, 14).
+    expect(editedIds).toEqual([
+      1, 2, 5, 6, 9, 10, 13, 14, 17, 21, 25, 29, 33, 37,
+    ]);
+    // Every window call received the shared timeout config
+    expect(capturedTimeouts.length).toBe(10);
+    for (const timeout of capturedTimeouts) {
+      expect(timeout).toEqual({
+        totalMs: DEFAULT_LLM_TIMEOUT_MS,
+        stepMs: DEFAULT_LLM_TIMEOUT_MS,
+      });
+    }
+  } finally {
+    (performanceDirectorAgent as unknown as { generate: unknown }).generate =
+      origGenerate;
+    config.voiceProvider = origVoiceProvider;
   }
 });

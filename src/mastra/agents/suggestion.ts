@@ -4,8 +4,8 @@ import { getAgentModelConfig } from "../../lib/providers.ts";
 
 /**
  * Structured schema for script improvement suggestions.
- * Returned by the suggestion agent via structuredOutput, replacing the old
- * plain-text "NO_IMPROVEMENTS_NEEDED" marker with a reliable boolean field.
+ * Returned by the suggestion agent via structuredOutput; an empty
+ * `suggestions` array signals that no improvements are needed.
  */
 export const SUGGESTION_CATEGORIES = [
   "missing-story",
@@ -26,11 +26,6 @@ export const SUGGESTION_CATEGORIES = [
 ] as const;
 
 export const scriptSuggestionsSchema = z.object({
-  improvementsNeeded: z
-    .boolean()
-    .describe(
-      "false ONLY if the script is excellent and needs no changes; true if any suggestion follows",
-    ),
   suggestions: z
     .array(
       z.object({
@@ -55,7 +50,7 @@ export const scriptSuggestionsSchema = z.object({
       }),
     )
     .describe(
-      "Concrete improvements to make; empty when improvementsNeeded is false",
+      "Concrete improvements to make; empty only if the script needs no changes",
     ),
 });
 
@@ -131,6 +126,6 @@ Read the script critically and look for:
 
 14. Cohesion break (cohesion) - Does the episode flow as one monologue? Flag: a question that is never answered or explored before the topic changes; a paragraph that could be moved anywhere without effect (disconnected filler); a transition that pivots without carrying any idea forward; an intro tease that never pays off or an outro that could end any episode. Quote the exact spot where the thread drops.
 
-For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. The script paragraphs are numbered like [P1], [P2], and so on: set paragraphIds to the numbers of the paragraphs each suggestion targets (empty only for whole-episode issues like overall length). When the prompt says you are reviewing only a window of paragraphs, judge ONLY those paragraphs and use only the categories the prompt lists. Set improvementsNeeded to false ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
+For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. The script paragraphs are numbered like [P1], [P2], and so on: set paragraphIds to the numbers of the paragraphs each suggestion targets (empty only for whole-episode issues like overall length). When the prompt says you are reviewing only a window of paragraphs, judge ONLY those paragraphs and use only the categories the prompt lists. Return an empty suggestions array ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
   model: getAgentModelConfig("summary"),
 });
