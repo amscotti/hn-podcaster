@@ -11,6 +11,7 @@ import {
 } from "../lib/script-editing.ts";
 import { XaiVoice } from "../lib/xai-voice.ts";
 import { performanceDirectorAgent } from "../mastra/agents/improvement.ts";
+import { podcastAgent } from "../mastra/agents/index.ts";
 import { summaryAgent } from "../mastra/agents/summary.ts";
 import {
   DOWNLOAD_CONCURRENCY,
@@ -18,16 +19,21 @@ import {
 } from "../mastra/steps/download-content.ts";
 import {
   buildAudioSegments,
+  DEFAULT_LLM_MODEL_SETTINGS,
   DEFAULT_LLM_TIMEOUT_MS,
   deterministicSuggestions,
   directPerformanceStep,
+  EDITOR_LLM_MODEL_SETTINGS,
   fenceUntrusted,
   generateAudioStep,
+  generateScriptStep,
   generateSummariesStep,
+  LONG_LLM_TIMEOUT_MS,
   LONG_PAUSE_PREFIX,
   MAX_COMMENTS_INPUT_CHARS,
   MAX_PERFORMANCE_EDITS,
   PERFORMANCE_WINDOW_CONCURRENCY,
+  SCRIPT_LLM_MODEL_SETTINGS,
   SUGGESTION_CONCURRENCY,
   SUMMARY_CONCURRENCY,
   takeRoundRobin,
@@ -594,5 +600,64 @@ test("directPerformanceStep caps edits round-robin across windows without starvi
     (performanceDirectorAgent as unknown as { generate: unknown }).generate =
       origGenerate;
     config.voiceProvider = origVoiceProvider;
+  }
+});
+
+test("LLM timeout tiers and generateScriptStep uses SCRIPT_LLM_MODEL_SETTINGS", async () => {
+  expect(DEFAULT_LLM_TIMEOUT_MS).toBe(300_000);
+  expect(LONG_LLM_TIMEOUT_MS).toBe(600_000);
+  expect(DEFAULT_LLM_MODEL_SETTINGS).toEqual({
+    timeout: {
+      totalMs: DEFAULT_LLM_TIMEOUT_MS,
+      stepMs: DEFAULT_LLM_TIMEOUT_MS,
+    },
+  });
+  expect(SCRIPT_LLM_MODEL_SETTINGS).toEqual({
+    timeout: {
+      totalMs: LONG_LLM_TIMEOUT_MS,
+      stepMs: LONG_LLM_TIMEOUT_MS,
+    },
+  });
+  expect(EDITOR_LLM_MODEL_SETTINGS).toEqual({
+    timeout: {
+      totalMs: LONG_LLM_TIMEOUT_MS,
+      stepMs: DEFAULT_LLM_TIMEOUT_MS,
+    },
+  });
+
+  const origGenerate = podcastAgent.generate;
+  let capturedOptions: unknown;
+  (podcastAgent as unknown as { generate: unknown }).generate = async (
+    _prompt: string,
+    options?: unknown,
+  ) => {
+    capturedOptions = options;
+    return { text: "Generated script paragraph." };
+  };
+  try {
+    const execute = generateScriptStep.execute as unknown as (
+      args: unknown,
+    ) => Promise<{
+      script: string;
+      summaries: string[];
+      iterationCount: number;
+    }>;
+    const out = await execute({
+      inputData: {
+        summaries: ["## Story One\nSummary body."],
+        storiesWithText: [],
+      },
+    });
+    expect(out.script).toBe("Generated script paragraph.");
+    expect(out.iterationCount).toBe(0);
+    expect(
+      (
+        capturedOptions as {
+          modelSettings?: { timeout?: { totalMs?: number; stepMs?: number } };
+        }
+      )?.modelSettings,
+    ).toEqual(SCRIPT_LLM_MODEL_SETTINGS);
+  } finally {
+    (podcastAgent as unknown as { generate: unknown }).generate = origGenerate;
   }
 });

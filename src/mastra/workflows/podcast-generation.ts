@@ -54,22 +54,30 @@ export const SUMMARY_CONCURRENCY = 5;
 /** Maximum parallel suggestion windows in flight. */
 export const SUGGESTION_CONCURRENCY = 4;
 
-/** Default per-call / per-step LLM timeout (4 min, sized for slow reasoning models). */
-export const DEFAULT_LLM_TIMEOUT_MS = 240_000;
+/** Default per-call / per-step LLM timeout (5 min, sized for slow reasoning models). */
+export const DEFAULT_LLM_TIMEOUT_MS = 300_000;
 
-/** Total timeout for multi-step tool-using editor iterations (10 min across steps). */
+/** Extended timeout for heavy single-pass script generation and multi-step editor iterations (10 min). */
 export const LONG_LLM_TIMEOUT_MS = 600_000;
 
 /** Shared modelSettings timeout for single-step LLM calls. */
-const DEFAULT_LLM_MODEL_SETTINGS = {
+export const DEFAULT_LLM_MODEL_SETTINGS = {
   timeout: {
     totalMs: DEFAULT_LLM_TIMEOUT_MS,
     stepMs: DEFAULT_LLM_TIMEOUT_MS,
   },
 };
 
+/** Shared modelSettings timeout for whole-episode script generation (single heavy reasoning pass). */
+export const SCRIPT_LLM_MODEL_SETTINGS = {
+  timeout: {
+    totalMs: LONG_LLM_TIMEOUT_MS,
+    stepMs: LONG_LLM_TIMEOUT_MS,
+  },
+};
+
 /** Shared modelSettings timeout for multi-step editor agent calls. */
-const EDITOR_LLM_MODEL_SETTINGS = {
+export const EDITOR_LLM_MODEL_SETTINGS = {
   timeout: {
     totalMs: LONG_LLM_TIMEOUT_MS,
     stepMs: DEFAULT_LLM_TIMEOUT_MS,
@@ -200,7 +208,7 @@ ${fenceUntrusted(storyText)}${communityContext}`;
 /**
  * Step 5: Generate initial podcast script
  */
-const generateScriptStep = createStep({
+export const generateScriptStep = createStep({
   id: "generate-script",
   inputSchema: z.object({
     summaries: z.array(z.string()),
@@ -278,7 +286,7 @@ ${fenceUntrusted(inputData.summaries.join("\n\n"))}
 Write the complete script covering ALL stories as flowing paragraphs.`;
 
     const result = await podcastAgent.generate(prompt, {
-      modelSettings: DEFAULT_LLM_MODEL_SETTINGS,
+      modelSettings: SCRIPT_LLM_MODEL_SETTINGS,
     });
 
     logger.info`Initial script generated (${result.text.length} characters)`;
