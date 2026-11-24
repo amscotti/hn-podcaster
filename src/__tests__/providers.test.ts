@@ -7,6 +7,7 @@ import {
 import {
   createVoiceProvider,
   getAgentModelConfig,
+  getAgentProviderOptions,
   getSpeechTagGuidance,
   resetVoiceProviderWarnings,
 } from "../lib/providers.ts";
@@ -176,4 +177,21 @@ test("getAgentModelConfig - returns provider/model id and throws when key is mis
       makeConfig({ aiProvider: "anthropic", apiKeys: {} }),
     ),
   ).toThrow(/API key required for anthropic/);
+});
+
+test("getAgentProviderOptions - returns xAI reasoningEffort and undefined for non-xAI", () => {
+  const xaiCfg = makeConfig({ aiProvider: "xai" });
+  expect(getAgentProviderOptions("low", xaiCfg)).toEqual({
+    xai: { reasoningEffort: "low" },
+  });
+  expect(getAgentProviderOptions("medium", xaiCfg)).toEqual({
+    xai: { reasoningEffort: "medium" },
+  });
+
+  const openaiCfg = makeConfig({ aiProvider: "openai" });
+  expect(getAgentProviderOptions("low", openaiCfg)).toBeUndefined();
+  expect(getAgentProviderOptions("medium", openaiCfg)).toBeUndefined();
+
+  const anthropicCfg = makeConfig({ aiProvider: "anthropic" });
+  expect(getAgentProviderOptions("low", anthropicCfg)).toBeUndefined();
 });

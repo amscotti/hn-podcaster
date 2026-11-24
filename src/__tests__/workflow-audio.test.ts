@@ -626,6 +626,7 @@ test("LLM timeout tiers and generateScriptStep uses SCRIPT_LLM_MODEL_SETTINGS", 
   });
 
   const origGenerate = podcastAgent.generate;
+  const origAiProvider = config.aiProvider;
   let capturedOptions: unknown;
   (podcastAgent as unknown as { generate: unknown }).generate = async (
     _prompt: string,
@@ -635,6 +636,7 @@ test("LLM timeout tiers and generateScriptStep uses SCRIPT_LLM_MODEL_SETTINGS", 
     return { text: "Generated script paragraph." };
   };
   try {
+    config.aiProvider = "xai";
     const execute = generateScriptStep.execute as unknown as (
       args: unknown,
     ) => Promise<{
@@ -654,10 +656,98 @@ test("LLM timeout tiers and generateScriptStep uses SCRIPT_LLM_MODEL_SETTINGS", 
       (
         capturedOptions as {
           modelSettings?: { timeout?: { totalMs?: number; stepMs?: number } };
+          providerOptions?: unknown;
         }
       )?.modelSettings,
     ).toEqual(SCRIPT_LLM_MODEL_SETTINGS);
+    expect(
+      (capturedOptions as { providerOptions?: unknown })?.providerOptions,
+    ).toEqual({ xai: { reasoningEffort: "low" } });
+
+    // Non-xAI provider omits providerOptions
+    config.aiProvider = "openai";
+    await execute({
+      inputData: {
+        summaries: ["## Story One\nSummary body."],
+        storiesWithText: [],
+      },
+    });
+    expect("providerOptions" in (capturedOptions as object)).toBe(false);
   } finally {
     (podcastAgent as unknown as { generate: unknown }).generate = origGenerate;
+    config.aiProvider = origAiProvider;
+  }
+});
+
+test("workflow LLM steps forward xAI low reasoningEffort providerOptions", async () => {
+  const origAiProvider = config.aiProvider;
+  const origVoiceProvider = config.voiceProvider;
+  const origSummaryGenerate = summaryAgent.generate;
+  const origPerfGenerate = performanceDirectorAgent.generate;
+
+  let summaryOptions: unknown;
+  let perfOptions: unknown;
+
+  (summaryAgent as unknown as { generate: unknown }).generate = async (
+    _prompt: string,
+    options?: unknown,
+  ) => {
+    summaryOptions = options;
+    return { text: "summary" };
+  };
+  (performanceDirectorAgent as unknown as { generate: unknown }).generate =
+    async (_prompt: string, options?: unknown) => {
+      perfOptions = options;
+      return { object: { edits: [] } };
+    };
+
+  try {
+    config.aiProvider = "xai";
+    config.voiceProvider = "xai";
+
+    const runSummary = generateSummariesStep.execute as unknown as (
+      args: unknown,
+    ) => Promise<unknown>;
+    await runSummary({
+      inputData: {
+        storiesWithText: [
+          {
+            id: 1,
+            title: "Story",
+            url: "https://example.com/1",
+            score: 10,
+            by: "tester",
+            time: 1_700_000_000,
+            type: "story",
+            text: "Body text.",
+            commentsText: "",
+          },
+        ],
+      },
+    });
+    expect(
+      (summaryOptions as { providerOptions?: unknown })?.providerOptions,
+    ).toEqual({ xai: { reasoningEffort: "low" } });
+
+    const runPerf = directPerformanceStep.execute as unknown as (
+      args: unknown,
+    ) => Promise<unknown>;
+    await runPerf({
+      inputData: {
+        script: "A single paragraph with enough spoken words for performance.",
+        summaries: ["## Story\nSummary"],
+        iterationCount: 1,
+      },
+    });
+    expect(
+      (perfOptions as { providerOptions?: unknown })?.providerOptions,
+    ).toEqual({ xai: { reasoningEffort: "low" } });
+  } finally {
+    (summaryAgent as unknown as { generate: unknown }).generate =
+      origSummaryGenerate;
+    (performanceDirectorAgent as unknown as { generate: unknown }).generate =
+      origPerfGenerate;
+    config.aiProvider = origAiProvider;
+    config.voiceProvider = origVoiceProvider;
   }
 });

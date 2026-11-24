@@ -3,6 +3,7 @@
  * Uses centralized config for provider selection and API keys.
  */
 
+import type { AgentExecutionOptions } from "@mastra/core/agent";
 import { type AIProvider, type Config, config } from "./config.ts";
 import { getAppLogger } from "./logger.ts";
 import {
@@ -13,13 +14,15 @@ import { XaiVoice } from "./xai-voice.ts";
 
 const logger = getAppLogger("providers");
 
-// Model mappings per provider. grok-4.7 is a slow reasoning model
-// (measured Oct 2026: 26-33s even on trivial structured calls, 146s for
-// script generation), so every call site must keep individual requests
-// small: summaries run per story in parallel, and the improvement loop
-// uses windowed suggestion passes plus paragraph-level tool edits
-// (see podcast-generation workflow). Do not reintroduce whole-episode
-// mega-calls on this model; they exceed the ~300s per-request ceiling.
+// Model mappings per provider. grok-4.7 is a slow reasoning model whose
+// unbounded default (and even "medium") reasoning can exceed Bun's ~300s
+// fetch ceiling on full-size summaries, so all grok-4.7 workflow steps use
+// `reasoningEffort: "low"` via `getAgentProviderOptions` (staying well
+// under Bun's ~300s transport timeout even on larger episodes) AND keep
+// individual requests small: summaries run per story in parallel, and the
+// improvement loop uses windowed suggestion passes plus paragraph-level
+// tool edits (see podcast-generation workflow). Do not reintroduce
+// whole-episode mega-calls or unbounded reasoning on this model.
 // OpenAI mapping updated Nov 2026 from OpenAI docs/model catalog (not yet
 // live-verified locally with an OpenAI API key): summary gpt-6-luna
 // (cheap/fast for per-story summaries), main gpt-6.1-sol (mid-tier for
@@ -54,6 +57,27 @@ export function getAgentModelConfig(
   return {
     id: `${provider}/${AI_PROVIDER_MODELS[provider][type]}`,
     apiKey,
+  };
+}
+
+/**
+ * Get provider-specific options for Mastra agent calls.
+ *
+ * Bounds `xai/grok-4.7` reasoning effort so requests stay well under Bun's
+ * ~300s transport timeout even on larger episodes (all workflow steps use
+ * `"low"`). Returns `undefined` for non-xAI providers.
+ */
+export function getAgentProviderOptions(
+  effort: "low" | "medium",
+  cfg: Config = config,
+): AgentExecutionOptions["providerOptions"] {
+  if (cfg.aiProvider !== "xai") {
+    return undefined;
+  }
+  return {
+    xai: {
+      reasoningEffort: effort,
+    },
   };
 }
 

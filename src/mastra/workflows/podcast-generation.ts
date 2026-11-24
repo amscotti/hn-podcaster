@@ -6,6 +6,7 @@ import { config } from "../../lib/config.ts";
 import { getAppLogger } from "../../lib/logger.ts";
 import {
   createVoiceProvider,
+  getAgentProviderOptions,
   getSpeechTagGuidance,
 } from "../../lib/providers.ts";
 import {
@@ -83,6 +84,12 @@ export const EDITOR_LLM_MODEL_SETTINGS = {
     stepMs: DEFAULT_LLM_TIMEOUT_MS,
   },
 };
+
+/** Optional `providerOptions` spread for Mastra agent calls (omitted when undefined). */
+function llmProviderOptions(effort: "low" | "medium") {
+  const providerOptions = getAgentProviderOptions(effort);
+  return providerOptions ? { providerOptions } : {};
+}
 
 /**
  * Take up to `limit` items across `buckets` in round-robin order (first item
@@ -192,6 +199,7 @@ ${fenceUntrusted(storyText)}${communityContext}`;
         logger.debug`Summarizing story ${index + 1}: ${story.title}`;
         const result = await summaryAgent.generate(prompt, {
           modelSettings: DEFAULT_LLM_MODEL_SETTINGS,
+          ...llmProviderOptions("low"),
         });
         return formatStoryContent(story, result.text);
       },
@@ -287,6 +295,7 @@ Write the complete script covering ALL stories as flowing paragraphs.`;
 
     const result = await podcastAgent.generate(prompt, {
       modelSettings: SCRIPT_LLM_MODEL_SETTINGS,
+      ...llmProviderOptions("low"),
     });
 
     logger.info`Initial script generated (${result.text.length} characters)`;
@@ -428,6 +437,7 @@ async function runSuggestionPrompt(
     const result = await suggestionAgent.generate(prompt, {
       structuredOutput: { schema: scriptSuggestionsSchema },
       modelSettings: DEFAULT_LLM_MODEL_SETTINGS,
+      ...llmProviderOptions("low"),
     });
     // Mastra types zod .default() fields as optional on the result
     // object; normalize so downstream code sees the schema output type.
@@ -669,6 +679,7 @@ When every suggestion is applied, re-read the neighborhoods around your edits on
       const editorResult = await editor.generate(editorPrompt, {
         maxSteps,
         modelSettings: EDITOR_LLM_MODEL_SETTINGS,
+        ...llmProviderOptions("low"),
       });
       logger.debug`Editor summary: ${editorResult.text.slice(0, 300)}`;
     } catch (error) {
@@ -791,6 +802,7 @@ ${tagGuidance}`;
         const result = await performanceDirectorAgent.generate(prompt, {
           structuredOutput: { schema: performanceEditsSchema },
           modelSettings: DEFAULT_LLM_MODEL_SETTINGS,
+          ...llmProviderOptions("low"),
         });
         return (result.object?.edits ?? [])
           .filter((e) => e.paragraphId >= start && e.paragraphId <= end)
