@@ -156,6 +156,8 @@ test("loadConfig - happy path keeps documented defaults", () => {
       COMMENT_COUNT: undefined,
       TARGET_DURATION_MINUTES: undefined,
       XAI_VOICE_SPEED: undefined,
+      OPENAI_VOICE_ID: undefined,
+      OPENAI_VOICE_SPEED: undefined,
       OUTPUT_DIR: undefined,
     },
     () => {
@@ -165,6 +167,9 @@ test("loadConfig - happy path keeps documented defaults", () => {
       expect(cfg.commentCount).toBe(25);
       expect(cfg.targetDurationMinutes).toBe(12);
       expect(cfg.xaiVoiceSpeed).toBe(0.9);
+      expect(cfg.openaiVoiceId).toBe("marin");
+      expect(cfg.openaiVoiceSpeed).toBe(1.0);
+      expect(cfg.openaiVoiceSpeedExplicit).toBe(false);
       expect(cfg.voiceProvider).toBe("xai");
       expect(cfg.aiProvider).toBe("xai");
     },
@@ -351,5 +356,52 @@ test("loadConfig - tracks xaiVoiceSpeedExplicit and enforces speed & lower bound
   });
   withEnv({ ...BASE_ENV, COMMENT_COUNT: "-1" }, () => {
     expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
+});
+
+test("loadConfig - validates OPENAI_VOICE_ID and OPENAI_VOICE_SPEED", () => {
+  withEnv(
+    {
+      ...BASE_ENV,
+      OPENAI_VOICE_ID: undefined,
+      OPENAI_VOICE_SPEED: undefined,
+    },
+    () => {
+      const cfg = loadConfig();
+      expect(cfg.openaiVoiceId).toBe("marin");
+      expect(cfg.openaiVoiceSpeed).toBe(1.0);
+      expect(cfg.openaiVoiceSpeedExplicit).toBe(false);
+    },
+  );
+  withEnv(
+    {
+      ...BASE_ENV,
+      OPENAI_VOICE_ID: "cedar",
+      OPENAI_VOICE_SPEED: "0.25",
+    },
+    () => {
+      const cfg = loadConfig();
+      expect(cfg.openaiVoiceId).toBe("cedar");
+      expect(cfg.openaiVoiceSpeed).toBe(0.25);
+      expect(cfg.openaiVoiceSpeedExplicit).toBe(true);
+    },
+  );
+  withEnv({ ...BASE_ENV, OPENAI_VOICE_SPEED: "1.5" }, () => {
+    expect(loadConfig().openaiVoiceSpeed).toBe(1.5);
+  });
+  withEnv({ ...BASE_ENV, OPENAI_VOICE_ID: "nova" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid OPENAI_VOICE_ID.*"nova"/);
+  });
+  withEnv({ ...BASE_ENV, OPENAI_VOICE_ID: "" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid OPENAI_VOICE_ID/);
+  });
+  withEnv({ ...BASE_ENV, OPENAI_VOICE_SPEED: "0.24" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
+  withEnv({ ...BASE_ENV, OPENAI_VOICE_SPEED: "1.51" }, () => {
+    expect(() => loadConfig()).toThrow(/Invalid configuration/);
+  });
+  withEnv({ ...BASE_ENV, OPENAI_VOICE_SPEED: "fast" }, () => {
+    expect(() => loadConfig()).toThrow(/OPENAI_VOICE_SPEED.*fast/);
   });
 });

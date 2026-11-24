@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  DEFAULT_OPENAI_REALTIME_VOICE,
+  DEFAULT_OPENAI_VOICE_SPEED,
+  OPENAI_REALTIME_VOICES,
+  OPENAI_VOICE_SPEED_MAX,
+  OPENAI_VOICE_SPEED_MIN,
+} from "./openai-realtime-voice.ts";
 import { XAI_VOICE_IDS } from "./xai-voice.ts";
 
 // Voice provider definitions
@@ -101,6 +108,24 @@ const ConfigSchema = z.object({
     .boolean()
     .default(false)
     .describe("Whether XAI_VOICE_SPEED was explicitly set in the environment"),
+  openaiVoiceId: z
+    .enum(OPENAI_REALTIME_VOICES)
+    .default(DEFAULT_OPENAI_REALTIME_VOICE)
+    .describe(
+      "OpenAI Realtime GA voice id (alloy, ash, ballad, coral, cedar, echo, marin, sage, shimmer, verse)",
+    ),
+  openaiVoiceSpeed: z
+    .number()
+    .min(OPENAI_VOICE_SPEED_MIN)
+    .max(OPENAI_VOICE_SPEED_MAX)
+    .default(DEFAULT_OPENAI_VOICE_SPEED)
+    .describe("OpenAI Realtime TTS speed multiplier (0.25-1.5; default 1.0)"),
+  openaiVoiceSpeedExplicit: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Whether OPENAI_VOICE_SPEED was explicitly set in the environment",
+    ),
 
   // Content fetching settings
   jinaApiKey: z
@@ -254,7 +279,20 @@ export function loadConfig(): Config {
     );
   }
 
+  const openaiVoiceId = (() => {
+    const explicit = Bun.env.OPENAI_VOICE_ID;
+    if (explicit === undefined) return undefined;
+    const trimmed = explicit.trim();
+    if (!(OPENAI_REALTIME_VOICES as readonly string[]).includes(trimmed)) {
+      throw new Error(
+        `Invalid OPENAI_VOICE_ID: "${explicit}". Must be one of: ${OPENAI_REALTIME_VOICES.join(", ")}`,
+      );
+    }
+    return trimmed;
+  })();
+
   const xaiVoiceSpeedExplicit = Boolean(Bun.env.XAI_VOICE_SPEED?.trim());
+  const openaiVoiceSpeedExplicit = Boolean(Bun.env.OPENAI_VOICE_SPEED?.trim());
   const rawConfig = {
     aiProvider,
     apiKeys,
@@ -269,6 +307,9 @@ export function loadConfig(): Config {
     xaiVoiceLanguage: Bun.env.XAI_VOICE_LANGUAGE,
     xaiVoiceSpeed: parseFloatEnv("XAI_VOICE_SPEED"),
     xaiVoiceSpeedExplicit,
+    openaiVoiceId,
+    openaiVoiceSpeed: parseFloatEnv("OPENAI_VOICE_SPEED"),
+    openaiVoiceSpeedExplicit,
     jinaApiKey: Bun.env.JINA_API_KEY,
   };
 

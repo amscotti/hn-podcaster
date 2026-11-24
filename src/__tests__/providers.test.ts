@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
-import { OpenAIVoice } from "@mastra/voice-openai";
 import type { Config } from "../lib/config.ts";
+import {
+  OPENAI_REALTIME_VOICE_MODEL,
+  OpenAIRealtimeVoice,
+} from "../lib/openai-realtime-voice.ts";
 import {
   createVoiceProvider,
   getAgentModelConfig,
@@ -27,6 +30,9 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     xaiVoiceLanguage: "en",
     xaiVoiceSpeed: 0.9,
     xaiVoiceSpeedExplicit: false,
+    openaiVoiceId: "marin",
+    openaiVoiceSpeed: 1.0,
+    openaiVoiceSpeedExplicit: false,
     ...overrides,
   };
 }
@@ -80,28 +86,27 @@ test("createVoiceProvider - throws when required voice API key is missing", () =
   ).toThrow(/OPENAI_API_KEY is required/);
 });
 
-test("createVoiceProvider - OpenAI default emits deprecation warning once and NO spurious XAI_VOICE_SPEED warning", () => {
+test("createVoiceProvider - OpenAI creates OpenAIRealtimeVoice with configured voice/speed and no deprecation warning", () => {
   resetVoiceProviderWarnings();
   const cfg = makeConfig({
     voiceProvider: "openai",
+    openaiVoiceId: "cedar",
+    openaiVoiceSpeed: 1.1,
     xaiVoiceSpeed: 0.9,
     xaiVoiceSpeedExplicit: false,
   });
 
   const warnings = captureConsoleWarns(() => {
-    const first = createVoiceProvider(cfg);
-    expect(first.voice).toBeInstanceOf(OpenAIVoice);
-    expect(typeof first.speakOptions.instructions).toBe("string");
-    // Second call should not duplicate the one-time deprecation warning
-    createVoiceProvider(cfg);
+    const handle = createVoiceProvider(cfg);
+    expect(handle.voice).toBeInstanceOf(OpenAIRealtimeVoice);
+    const realtimeVoice = handle.voice as OpenAIRealtimeVoice;
+    expect(realtimeVoice.model).toBe(OPENAI_REALTIME_VOICE_MODEL);
+    expect(realtimeVoice.speaker).toBe("cedar");
+    expect(realtimeVoice.speed).toBe(1.1);
+    expect(handle.speakOptions).toEqual({});
   });
 
-  const deprecationWarns = warnings.filter(
-    (w) => w.includes("gpt-4o-mini-tts") && w.includes("2027-01-06"),
-  );
-  const speedWarns = warnings.filter((w) => w.includes("XAI_VOICE_SPEED"));
-  expect(deprecationWarns.length).toBe(1);
-  expect(speedWarns.length).toBe(0);
+  expect(warnings).toEqual([]);
 });
 
 test("createVoiceProvider - OpenAI warns once when XAI_VOICE_SPEED was explicitly set", () => {
@@ -117,11 +122,29 @@ test("createVoiceProvider - OpenAI warns once when XAI_VOICE_SPEED was explicitl
     createVoiceProvider(cfg);
   });
 
-  const deprecationWarns = warnings.filter(
-    (w) => w.includes("gpt-4o-mini-tts") && w.includes("2027-01-06"),
+  const speedWarns = warnings.filter(
+    (w) => w.includes("XAI_VOICE_SPEED=1") && w.includes("OPENAI_VOICE_SPEED"),
   );
-  const speedWarns = warnings.filter((w) => w.includes("XAI_VOICE_SPEED=1"));
-  expect(deprecationWarns.length).toBe(1);
+  expect(speedWarns.length).toBe(1);
+});
+
+test("createVoiceProvider - xAI warns once when OPENAI_VOICE_SPEED was explicitly set", () => {
+  resetVoiceProviderWarnings();
+  const cfg = makeConfig({
+    voiceProvider: "xai",
+    openaiVoiceSpeed: 1.2,
+    openaiVoiceSpeedExplicit: true,
+  });
+
+  const warnings = captureConsoleWarns(() => {
+    createVoiceProvider(cfg);
+    createVoiceProvider(cfg);
+  });
+
+  const speedWarns = warnings.filter(
+    (w) =>
+      w.includes("OPENAI_VOICE_SPEED=1.2") && w.includes("XAI_VOICE_SPEED"),
+  );
   expect(speedWarns.length).toBe(1);
 });
 

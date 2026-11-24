@@ -41,10 +41,11 @@ bun test        # run the test suite
   is the main install-time malware vector Bun leaves open.
 - The `@mastra/*` scope was compromised in June 2026 (the `easy-day-js`
   typosquat; `@mastra/core@1.42.1` and ~140 sibling packages). The current
-  pins (`@mastra/core@1.78.0`, `@mastra/voice-openai@0.13.2`) are
-  post-incident releases with npm provenance attestations and no
-  `easy-day-js` in their trees. Keep Mastra packages **exact-pinned**, and
-  when bumping, check the new tree for unexpected deps before trusting it.
+  pin (`@mastra/core@1.78.0`) is a post-incident release with npm provenance
+  attestations and no `easy-day-js` in its tree (`@mastra/voice-openai` was
+  removed when OpenAI voice migrated to the hand-rolled Realtime client).
+  Keep Mastra packages **exact-pinned**, and when bumping, check the new tree
+  for unexpected deps before trusting it.
 
 ## Runtime gotchas
 
@@ -55,7 +56,8 @@ bun test        # run the test suite
   preload (`src/__tests__/preload.ts`) seeds placeholder keys before any
   module import; it never overwrites real env values.
 - Voice defaults to **xAI Eve at speed 0.9** (`src/lib/config.ts`).
-  `XAI_VOICE_ID`, `XAI_VOICE_SPEED`, `VOICE_PROVIDER=openai`, or
+  `XAI_VOICE_ID`, `XAI_VOICE_SPEED`, `VOICE_PROVIDER=openai` (with
+  `OPENAI_VOICE_ID`, `OPENAI_VOICE_SPEED`, and `ffmpeg` on `PATH`), or
   `SKIP_AUDIO=true` override it. `LOG_LEVEL` controls LogTape verbosity.
   Episode defaults are 7 stories / 12 minutes; word budgets use the
   measured `TARGET_WORDS_PER_MINUTE` in the workflow, not 140 wpm.
@@ -79,14 +81,19 @@ bun test        # run the test suite
   TTS **REST** endpoint, which has no model-version parameter. "Grok Voice
   3.0" is xAI's separate realtime Voice Agent (speech-to-speech) API — not
   a fit for rendering a fixed script to MP3, and intentionally unused.
+- **Custom `OpenAIRealtimeVoice` in `src/lib/openai-realtime-voice.ts`.**
+  OpenAI's legacy `gpt-4o-mini-tts` REST model shuts down Jan 6, 2027 and
+  its replacement (`gpt-realtime-2.1-mini`) is Realtime-API only. Rather than
+  pulling in `@mastra/voice-openai-realtime` (extra Mastra supply-chain
+  surface) or `ws`, this provider uses Bun's native `WebSocket` against the
+  GA Realtime API (omitting the retired `OpenAI-Beta: realtime=v1` header)
+  and pipes the 24kHz PCM16 output through `ffmpeg` via `Bun.spawn`
+  (`-write_xing 0 -id3v2_version 0` for headerless CBR MP3 concat).
+  `@mastra/voice-openai` has been removed.
 - **Structural `VoiceLike` interface in `src/lib/providers.ts`.** It is
-  intentional: `@mastra/voice-openai` bundles its own copy of
-  `@mastra/core`, so typing against `MastraVoice` directly is structurally
-  incompatible. Leave it.
-- The OpenAI voice model is cast through `as any` for the same reason — the
-  shipped types only list `tts-1`/`tts-1-hd`, but `gpt-4o-mini-tts` works.
-  Matching `biome-ignore` comments mark these spots.
-- OpenAI voice `gpt-4o-mini-tts` shuts down Jan 6 2027 and its replacement is Realtime-API only, so the OpenAI voice path needs a realtime-API migration.
+  intentional: `MastraVoice` types `speak()` with Node's `ReadableStream`
+  while our providers return web `ReadableStream<Uint8Array>`, so keeping a
+  minimal `AsyncIterable<unknown>` interface decouples the workflow. Leave it.
 
 ## Architecture pointers
 
@@ -107,8 +114,8 @@ bun test        # run the test suite
 - Adding/changing an AI provider touches **two** files: the model table in
   `src/lib/providers.ts` and the provider id list + env-key map in
   `src/lib/config.ts`.
-- `@mastra/core` is pinned to `1.78.0` and `@mastra/voice-openai` to
-  `0.13.2` (exact versions in `package.json`). Bump deliberately.
+- `@mastra/core` is pinned to `1.78.0` (exact version in `package.json`;
+  `@mastra/voice-openai` has been removed). Bump deliberately.
 - Bun-native APIs are used deliberately where they help: `Bun.write` /
   `Bun.file().writer()` for transcript + MP3 output (chunk audio streams
   into one file sink; no temp part-files), `Bun.sleep` for download retry

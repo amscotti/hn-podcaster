@@ -96,8 +96,10 @@ XAI_API_KEY=your_xai_key_here
 *\*OpenAI chat model IDs (`gpt-6-luna`, `gpt-6.1-sol`) were updated from OpenAI's docs/model catalog and have not yet been live-verified locally with an OpenAI API key.*
 
 **Voice / TTS** defaults to **xAI** (Grok TTS). Set `VOICE_PROVIDER=openai` to
-use OpenAI TTS instead, or `SKIP_AUDIO=true` for transcript-only runs.
-Note: OpenAI voice `gpt-4o-mini-tts` shuts down Jan 6 2027 and needs a realtime-API migration, so xAI remains the default.
+use OpenAI's GA Realtime API (`gpt-realtime-2.1-mini`) instead, or
+`SKIP_AUDIO=true` for transcript-only runs. The OpenAI voice path has already
+been migrated off the legacy `gpt-4o-mini-tts` endpoint (shutting down Jan 6,
+2027) and requires `ffmpeg` on `PATH` to encode 24kHz PCM16 audio to MP3.
 
 ### Optional Settings
 
@@ -131,6 +133,9 @@ SKIP_AUDIO=true
 #                        # Full list: GET https://api.x.ai/v1/tts/voices
 # XAI_VOICE_LANGUAGE=en  # BCP-47 code or "auto" (default: en)
 # XAI_VOICE_SPEED=0.9    # 0.7-1.5 (default: 0.9)
+# OPENAI_VOICE_ID=marin  # OpenAI Realtime GA voice: alloy, ash, ballad, coral,
+#                        # cedar, echo, marin, sage, shimmer, verse (default: marin)
+# OPENAI_VOICE_SPEED=1.0 # 0.25-1.5 (default: 1.0; requires ffmpeg on PATH)
 
 # Logging (optional)
 # LOG_LEVEL=info         # trace | debug | info | warning | error | fatal
@@ -198,6 +203,7 @@ src/
 │   ├── http.ts               # fetchWithTimeout helper
 │   ├── format-story.ts       # Story formatting & download filtering helpers
 │   ├── script-editing.ts     # Paragraph edit state & validation (improve loop)
+│   ├── openai-realtime-voice.ts # OpenAI Realtime API TTS voice provider
 │   ├── xai-voice.ts          # xAI (Grok) TTS voice provider
 │   └── logger.ts             # LogTape configuration
 └── __tests__/                # Test files
@@ -241,3 +247,5 @@ Five specialized agents handle different aspects:
 - API key for at least one supported AI provider
 - xAI API key for default TTS (or OpenAI if `VOICE_PROVIDER=openai`; or
   `SKIP_AUDIO=true`)
+- `ffmpeg` on `PATH` when using `VOICE_PROVIDER=openai` (encodes OpenAI
+  Realtime 24kHz PCM16 output to MP3)

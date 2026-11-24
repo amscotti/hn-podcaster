@@ -3,9 +3,12 @@
  * Uses centralized config for provider selection and API keys.
  */
 
-import { OpenAIVoice } from "@mastra/voice-openai";
 import { type AIProvider, type Config, config } from "./config.ts";
 import { getAppLogger } from "./logger.ts";
+import {
+  DEFAULT_OPENAI_REALTIME_INSTRUCTIONS,
+  OpenAIRealtimeVoice,
+} from "./openai-realtime-voice.ts";
 import { XaiVoice } from "./xai-voice.ts";
 
 const logger = getAppLogger("providers");
@@ -29,16 +32,6 @@ const AI_PROVIDER_MODELS: Record<
   openai: { summary: "gpt-6-luna", main: "gpt-6.1-sol" },
   anthropic: { summary: "claude-haiku-5-5", main: "claude-sonnet-5-5" },
   google: { summary: "gemini-3.8-flash", main: "gemini-3.1-pro-preview" },
-};
-
-// OpenAI voice settings
-const OPENAI_VOICE_CONFIG = {
-  model: "gpt-4o-mini-tts",
-  speaker: "nova",
-  instructions:
-    "You are podcaster reading today's latest news articles to your audience, " +
-    "with excitement and intrigue in your voice to engage readers and entertain them. " +
-    "Ensure you add pauses in between what you're saying to emphasize.",
 };
 
 /**
@@ -67,14 +60,14 @@ export function getAgentModelConfig(
 /**
  * Structural interface for the voice provider methods this project uses.
  *
- * We avoid typing against `MastraVoice` directly because `@mastra/voice-openai`
- * bundles its own copy of `@mastra/core` (private fields make the types
- * structurally incompatible across packages). Both OpenAIVoice and our XaiVoice
+ * We avoid typing against `MastraVoice` directly because its `speak()` return
+ * type uses Node's `ReadableStream`, whereas our custom voice providers return
+ * web `ReadableStream<Uint8Array>`. Both `XaiVoice` and `OpenAIRealtimeVoice`
  * satisfy this minimal interface.
  *
  * The return type is deliberately `AsyncIterable<unknown>` — both providers
- * return a byte stream in practice, and keeping it minimal avoids picking a
- * side between the web `ReadableStream` and Mastra's bundled type.
+ * return a byte stream in practice, and keeping it minimal decouples the
+ * workflow from runtime-specific stream types.
  */
 export interface VoiceLike {
   speak(
@@ -94,18 +87,19 @@ export interface VoiceProviderHandle {
 }
 
 /** Startup warnings fire once even if the provider is created repeatedly. */
-let warnedIgnoredSpeed = false;
-let warnedOpenAIDeprecation = false;
+let warnedIgnoredXaiSpeed = false;
+let warnedIgnoredOpenAISpeed = false;
 
 /** Reset one-time warning guards (for tests). */
 export function resetVoiceProviderWarnings(): void {
-  warnedIgnoredSpeed = false;
-  warnedOpenAIDeprecation = false;
+  warnedIgnoredXaiSpeed = false;
+  warnedIgnoredOpenAISpeed = false;
 }
 
 /**
  * Create the configured voice provider for TTS.
- * Supports xAI (default) and OpenAI via VOICE_PROVIDER.
+ * Supports xAI (default) and OpenAI Realtime (`gpt-realtime-2.1-mini`) via
+ * `VOICE_PROVIDER`.
  */
 export function createVoiceProvider(cfg: Config = config): VoiceProviderHandle {
   switch (cfg.voiceProvider) {
@@ -113,6 +107,10 @@ export function createVoiceProvider(cfg: Config = config): VoiceProviderHandle {
       const apiKey = cfg.apiKeys.xai;
       if (!apiKey) {
         throw new Error("XAI_API_KEY is required for the xAI voice provider");
+      }
+      if (cfg.openaiVoiceSpeedExplicit && !warnedIgnoredOpenAISpeed) {
+        warnedIgnoredOpenAISpeed = true;
+        logger.warn`OPENAI_VOICE_SPEED=${cfg.openaiVoiceSpeed} is ignored by the xAI voice path (use XAI_VOICE_SPEED instead)`;
       }
       const voice = new XaiVoice({
         apiKey,
@@ -130,33 +128,17 @@ export function createVoiceProvider(cfg: Config = config): VoiceProviderHandle {
           "OPENAI_API_KEY is required for the OpenAI voice provider",
         );
       }
-      if (!warnedOpenAIDeprecation) {
-        warnedOpenAIDeprecation = true;
-        logger.warn`OpenAI voice model ${OPENAI_VOICE_CONFIG.model} shuts down on 2027-01-06; consider switching to VOICE_PROVIDER=xai or migrating to the Realtime API before shutdown`;
+      if (cfg.xaiVoiceSpeedExplicit && !warnedIgnoredXaiSpeed) {
+        warnedIgnoredXaiSpeed = true;
+        logger.warn`XAI_VOICE_SPEED=${cfg.xaiVoiceSpeed} is ignored by the OpenAI voice path (use OPENAI_VOICE_SPEED instead)`;
       }
-      if (cfg.xaiVoiceSpeedExplicit && !warnedIgnoredSpeed) {
-        warnedIgnoredSpeed = true;
-        logger.warn`XAI_VOICE_SPEED=${cfg.xaiVoiceSpeed} is ignored by the OpenAI voice path (speed is an xAI-only knob)`;
-      }
-      // Note: Mastra voice-openai types only list tts-1/tts-1-hd, but
-      // gpt-4o-mini-tts works at runtime via OpenAI's API. Pass listeningModel
-      // apiKey too so OpenAIVoice does not fall back to process.env.OPENAI_API_KEY.
-      const voice = new OpenAIVoice({
-        speechModel: {
-          // biome-ignore lint/suspicious/noExplicitAny: shipped types omit gpt-4o-mini-tts (see above)
-          name: OPENAI_VOICE_CONFIG.model as any,
-          apiKey,
-        },
-        listeningModel: {
-          name: "whisper-1",
-          apiKey,
-        },
-        speaker: OPENAI_VOICE_CONFIG.speaker,
+      const voice = new OpenAIRealtimeVoice({
+        apiKey,
+        speaker: cfg.openaiVoiceId,
+        speed: cfg.openaiVoiceSpeed,
+        instructions: DEFAULT_OPENAI_REALTIME_INSTRUCTIONS,
       });
-      return {
-        voice,
-        speakOptions: { instructions: OPENAI_VOICE_CONFIG.instructions },
-      };
+      return { voice, speakOptions: {} };
     }
     default: {
       const exhaustive: never = cfg.voiceProvider;
