@@ -1,11 +1,11 @@
 import { Agent } from "@mastra/core/agent";
-import { z } from "@zod/zod";
+import { z } from "zod";
 import { getAgentModelConfig } from "../../lib/providers.ts";
 
 /**
  * Structured schema for script improvement suggestions.
- * Returned by the suggestion agent via structuredOutput, replacing the old
- * plain-text "NO_IMPROVEMENTS_NEEDED" marker with a reliable boolean field.
+ * Returned by the suggestion agent via structuredOutput; an empty
+ * `suggestions` array signals that no improvements are needed.
  */
 export const SUGGESTION_CATEGORIES = [
   "missing-story",
@@ -26,17 +26,18 @@ export const SUGGESTION_CATEGORIES = [
 ] as const;
 
 export const scriptSuggestionsSchema = z.object({
-  improvementsNeeded: z
-    .boolean()
-    .describe(
-      "false ONLY if the script is excellent and needs no changes; true if any suggestion follows",
-    ),
   suggestions: z
     .array(
       z.object({
         category: z
           .enum(SUGGESTION_CATEGORIES)
           .describe("The type of issue found"),
+        paragraphIds: z
+          .array(z.number().int().positive())
+          .default([])
+          .describe(
+            "1-based ids of the [Pn] paragraphs this suggestion targets; empty for whole-episode issues",
+          ),
         quote: z
           .string()
           .optional()
@@ -49,13 +50,41 @@ export const scriptSuggestionsSchema = z.object({
       }),
     )
     .describe(
-      "Concrete improvements to make; empty when improvementsNeeded is false",
+      "Concrete improvements to make; empty only if the script needs no changes",
     ),
 });
 
 export type SuggestionCategory = (typeof SUGGESTION_CATEGORIES)[number];
 
 export type ScriptSuggestions = z.infer<typeof scriptSuggestionsSchema>;
+
+export type ScriptSuggestion = ScriptSuggestions["suggestions"][number];
+
+/**
+ * Categories a windowed (local) review may raise. Window prompts only see
+ * a slice of the script, so whole-episode judgments are filtered out in
+ * code even if the model returns them.
+ */
+export const WINDOW_SUGGESTION_CATEGORIES = [
+  "code-read-aloud",
+  "dense-sentence",
+  "unexplained-jargon",
+  "unnatural-phrasing",
+  "abrupt-transition",
+  "delivery",
+  "flat-delivery",
+  "other",
+] as const satisfies readonly SuggestionCategory[];
+
+/** Categories the whole-episode (global) review may raise. */
+export const GLOBAL_SUGGESTION_CATEGORIES = [
+  "missing-story",
+  "uneven-depth",
+  "weak-outro",
+  "missing-intro-overview",
+  "cohesion",
+  "other",
+] as const satisfies readonly SuggestionCategory[];
 
 /**
  * Agent for suggesting improvements to the script.
@@ -65,8 +94,7 @@ export type ScriptSuggestions = z.infer<typeof scriptSuggestionsSchema>;
 export const suggestionAgent = new Agent({
   id: "script-editor-agent",
   name: "Script Editor Agent",
-  instructions:
-    `You are a demanding podcast editor. Your job is to find specific improvements, not give the script a pass.
+  instructions: `You are a demanding podcast editor. Your job is to find specific improvements, not give the script a pass.
 
 Read the script critically and look for:
 
@@ -78,7 +106,7 @@ Read the script critically and look for:
 
 4. Unexplained jargon (unexplained-jargon) - Technical terms or acronyms that need plain-English explanation? List them.
 
-5. Uneven depth (uneven-depth) - Does one story get lots of attention while another gets just 1-2 sentences? Every story deserves similar coverage. Call out any imbalance.
+5. Uneven depth (uneven-depth) - Intentional anchor-vs-crisp pacing is expected: 2-3 anchor stories should get 3-4 paragraphs to breathe, while the remaining stories stay crisp at 1-2 paragraphs. Do NOT flag that deliberate contrast; ONLY flag a story reduced to a throwaway drive-by mention (e.g. 1-2 bare sentences with no real explanation) or a weak story padded out with filler.
 
 6. Unnatural phrasing (unnatural-phrasing) - Anything that sounds written rather than spoken? Choppy fragments? Quote specific phrases.
 
@@ -98,6 +126,6 @@ Read the script critically and look for:
 
 14. Cohesion break (cohesion) - Does the episode flow as one monologue? Flag: a question that is never answered or explored before the topic changes; a paragraph that could be moved anywhere without effect (disconnected filler); a transition that pivots without carrying any idea forward; an intro tease that never pays off or an outro that could end any episode. Quote the exact spot where the thread drops.
 
-For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. Set improvementsNeeded to false ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
+For each issue, quote the exact text that needs work (when applicable) and give a specific, actionable fix. The script paragraphs are numbered like [P1], [P2], and so on: set paragraphIds to the numbers of the paragraphs each suggestion targets (empty only for whole-episode issues like overall length). When the prompt says you are reviewing only a window of paragraphs, judge ONLY those paragraphs and use only the categories the prompt lists. Return an empty suggestions array ONLY if you genuinely cannot find a single thing to improve. Be critical.`,
   model: getAgentModelConfig("summary"),
 });

@@ -7,17 +7,18 @@ import { getAgentModelConfig } from "../../lib/providers.ts";
 export const summaryAgent = new Agent({
   id: "summary-agent",
   name: "Summary Agent",
-  instructions:
-    `You are preparing article summaries for a podcast host who needs to explain tech topics to a general audience.
+  instructions: `You are preparing article summaries for a podcast host who needs to explain tech topics to a general audience.
 
-For each article, provide:
-1. The core story - what happened or what was created, in plain language
-2. Why it matters - the "so what?" that makes this interesting or significant
-3. Key details - the most fascinating or surprising specifics worth mentioning
-4. Context - any background a general listener might need to understand this
-5. Technical terms - flag any jargon that needs explaining, with simple definitions
+For each article, provide only what a host needs to tell the story well:
+1. The human hook - the surprising, delightful, worrying, or absurd angle a listener will remember
+2. The core story - what happened or what was created, in plain language
+3. Why it matters - the "so what?" and who it affects
+4. At most THREE strongest details - fascinating specifics worth speaking aloud; skip exhaustive recap
+5. Only essential context and jargon explanations a general listener needs
 
-Write in a way that captures the interesting human angle, not just the technical facts. Help the host tell a story, not just report news.
+Capture emotional stakes and vivid examples, not every fact. Help the host tell a story with room to react, not deliver a compressed report.
+
+Factual anchoring: use only facts present in the supplied article text and comments; never introduce a number, name, quote, date or claim that is not in them; when the source is thin or uncertain, say less instead of guessing.
 
 Note: Don't include code snippets or SQL - describe what they do in plain English instead.`,
   model: getAgentModelConfig("summary"),

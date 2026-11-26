@@ -3,40 +3,52 @@
  * Uses centralized config for provider selection and API keys.
  */
 
-import { type AIProvider, config } from "./config.ts";
+import type { AgentExecutionOptions } from "@mastra/core/agent";
+import { type AIProvider, type Config, config } from "./config.ts";
+import { getAppLogger } from "./logger.ts";
+import {
+  DEFAULT_OPENAI_REALTIME_INSTRUCTIONS,
+  OpenAIRealtimeVoice,
+} from "./openai-realtime-voice.ts";
 import { XaiVoice } from "./xai-voice.ts";
-import { OpenAIVoice } from "@mastra/voice-openai";
 
-// Model mappings per provider
+const logger = getAppLogger("providers");
+
+// Model mappings per provider. grok-4.7 is a slow reasoning model whose
+// unbounded default (and even "medium") reasoning can exceed Bun's ~300s
+// fetch ceiling on full-size summaries, so all grok-4.7 workflow steps use
+// `reasoningEffort: "low"` via `getAgentProviderOptions` (staying well
+// under Bun's ~300s transport timeout even on larger episodes) AND keep
+// individual requests small: summaries run per story in parallel, and the
+// improvement loop uses windowed suggestion passes plus paragraph-level
+// tool edits (see podcast-generation workflow). Do not reintroduce
+// whole-episode mega-calls or unbounded reasoning on this model.
+// OpenAI mapping updated Nov 2026 from OpenAI docs/model catalog (not yet
+// live-verified locally with an OpenAI API key): summary gpt-6-luna
+// (cheap/fast for per-story summaries), main gpt-6.1-sol (mid-tier for
+// the script).
 const AI_PROVIDER_MODELS: Record<
   AIProvider,
   { summary: string; main: string }
 > = {
-  xai: { summary: "grok-4.6", main: "grok-4.6" },
-  openai: { summary: "gpt-5-mini", main: "gpt-5.2" },
-  anthropic: { summary: "claude-haiku-4-5", main: "claude-sonnet-4-5" },
-  google: { summary: "gemini-3-flash-preview", main: "gemini-3-pro-preview" },
-};
-
-// OpenAI voice settings
-const OPENAI_VOICE_CONFIG = {
-  model: "gpt-4o-mini-tts",
-  speaker: "nova",
-  instructions:
-    "You are podcaster reading today's latest news articles to your audience, " +
-    "with excitement and intrigue in your voice to engage readers and entertain them. " +
-    "Ensure you add pauses in between what you're saying to emphasize.",
+  xai: { summary: "grok-4.7", main: "grok-4.7" },
+  openai: { summary: "gpt-6-luna", main: "gpt-6.1-sol" },
+  anthropic: { summary: "claude-haiku-5-5", main: "claude-sonnet-5-5" },
+  google: { summary: "gemini-3.8-flash", main: "gemini-3.1-pro-preview" },
 };
 
 /**
  * Get model config for Mastra agents
  */
-export function getAgentModelConfig(type: "summary" | "main"): {
+export function getAgentModelConfig(
+  type: "summary" | "main",
+  cfg: Config = config,
+): {
   id: `${string}/${string}`;
   apiKey: string;
 } {
-  const provider = config.aiProvider;
-  const apiKey = config.apiKeys[provider];
+  const provider = cfg.aiProvider;
+  const apiKey = cfg.apiKeys[provider];
 
   if (!apiKey) {
     throw new Error(`API key required for ${provider} provider`);
@@ -49,22 +61,43 @@ export function getAgentModelConfig(type: "summary" | "main"): {
 }
 
 /**
+ * Get provider-specific options for Mastra agent calls.
+ *
+ * Bounds `xai/grok-4.7` reasoning effort so requests stay well under Bun's
+ * ~300s transport timeout even on larger episodes (all workflow steps use
+ * `"low"`). Returns `undefined` for non-xAI providers.
+ */
+export function getAgentProviderOptions(
+  effort: "low" | "medium",
+  cfg: Config = config,
+): AgentExecutionOptions["providerOptions"] {
+  if (cfg.aiProvider !== "xai") {
+    return undefined;
+  }
+  return {
+    xai: {
+      reasoningEffort: effort,
+    },
+  };
+}
+
+/**
  * Structural interface for the voice provider methods this project uses.
  *
- * We avoid typing against `MastraVoice` directly because `@mastra/voice-openai`
- * bundles its own copy of `@mastra/core` (private fields make the types
- * structurally incompatible across packages). Both OpenAIVoice and our XaiVoice
+ * We avoid typing against `MastraVoice` directly because its `speak()` return
+ * type uses Node's `ReadableStream`, whereas our custom voice providers return
+ * web `ReadableStream<Uint8Array>`. Both `XaiVoice` and `OpenAIRealtimeVoice`
  * satisfy this minimal interface.
  *
  * The return type is deliberately `AsyncIterable<unknown>` — both providers
- * return a byte stream in practice, and keeping it minimal avoids picking a
- * side between Deno's web `ReadableStream` and Mastra's bundled type.
+ * return a byte stream in practice, and keeping it minimal decouples the
+ * workflow from runtime-specific stream types.
  */
 export interface VoiceLike {
   speak(
     input: string,
     options?: Record<string, unknown>,
-  ): Promise<AsyncIterable<unknown> | void>;
+  ): Promise<AsyncIterable<unknown> | undefined>;
 }
 
 /**
@@ -77,47 +110,63 @@ export interface VoiceProviderHandle {
   speakOptions: Record<string, unknown>;
 }
 
+/** Startup warnings fire once even if the provider is created repeatedly. */
+let warnedIgnoredXaiSpeed = false;
+let warnedIgnoredOpenAISpeed = false;
+
+/** Reset one-time warning guards (for tests). */
+export function resetVoiceProviderWarnings(): void {
+  warnedIgnoredXaiSpeed = false;
+  warnedIgnoredOpenAISpeed = false;
+}
+
 /**
  * Create the configured voice provider for TTS.
- * Supports xAI (default) and OpenAI via VOICE_PROVIDER.
+ * Supports xAI (default) and OpenAI Realtime (`gpt-realtime-2.1-mini`) via
+ * `VOICE_PROVIDER`.
  */
-export function createVoiceProvider(): VoiceProviderHandle {
-  switch (config.voiceProvider) {
+export function createVoiceProvider(cfg: Config = config): VoiceProviderHandle {
+  switch (cfg.voiceProvider) {
     case "xai": {
-      const apiKey = config.apiKeys.xai;
+      const apiKey = cfg.apiKeys.xai;
       if (!apiKey) {
         throw new Error("XAI_API_KEY is required for the xAI voice provider");
       }
+      if (cfg.openaiVoiceSpeedExplicit && !warnedIgnoredOpenAISpeed) {
+        warnedIgnoredOpenAISpeed = true;
+        logger.warn`OPENAI_VOICE_SPEED=${cfg.openaiVoiceSpeed} is ignored by the xAI voice path (use XAI_VOICE_SPEED instead)`;
+      }
       const voice = new XaiVoice({
         apiKey,
-        speaker: config.xaiVoiceId,
-        language: config.xaiVoiceLanguage,
+        speaker: cfg.xaiVoiceId,
+        language: cfg.xaiVoiceLanguage,
+        speed: cfg.xaiVoiceSpeed,
       });
       // xAI TTS has no "instructions"/persona prompt; speed is the main knob.
       return { voice, speakOptions: {} };
     }
-    case "openai":
-    default: {
-      const apiKey = config.apiKeys.openai;
+    case "openai": {
+      const apiKey = cfg.apiKeys.openai;
       if (!apiKey) {
         throw new Error(
           "OPENAI_API_KEY is required for the OpenAI voice provider",
         );
       }
-      // Note: Mastra voice-openai types only list tts-1/tts-1-hd, but
-      // gpt-4o-mini-tts works at runtime via OpenAI's API
-      const voice = new OpenAIVoice({
-        speechModel: {
-          // deno-lint-ignore no-explicit-any
-          name: OPENAI_VOICE_CONFIG.model as any,
-          apiKey,
-        },
-        speaker: OPENAI_VOICE_CONFIG.speaker,
+      if (cfg.xaiVoiceSpeedExplicit && !warnedIgnoredXaiSpeed) {
+        warnedIgnoredXaiSpeed = true;
+        logger.warn`XAI_VOICE_SPEED=${cfg.xaiVoiceSpeed} is ignored by the OpenAI voice path (use OPENAI_VOICE_SPEED instead)`;
+      }
+      const voice = new OpenAIRealtimeVoice({
+        apiKey,
+        speaker: cfg.openaiVoiceId,
+        speed: cfg.openaiVoiceSpeed,
+        instructions: DEFAULT_OPENAI_REALTIME_INSTRUCTIONS,
       });
-      return {
-        voice,
-        speakOptions: { instructions: OPENAI_VOICE_CONFIG.instructions },
-      };
+      return { voice, speakOptions: {} };
+    }
+    default: {
+      const exhaustive: never = cfg.voiceProvider;
+      throw new Error(`Unsupported voice provider: ${String(exhaustive)}`);
     }
   }
 }
@@ -132,26 +181,24 @@ export function createVoiceProvider(): VoiceProviderHandle {
  * Returns instructions the script-writing agents can follow, or an empty
  * string when tags are unsupported (so prompts stay unchanged).
  */
-export function getSpeechTagGuidance(): string {
-  if (config.voiceProvider !== "xai") return "";
+export function getSpeechTagGuidance(cfg: Config = config): string {
+  if (cfg.voiceProvider !== "xai") return "";
 
   return `
-Delivery tags for natural, human-like speech (IMPORTANT - the audio sounds flat without them):
-The audio is generated by xAI (Grok) TTS, which understands inline delivery tags embedded right in the text. These are how you make the podcast sound like a real, expressive human host rather than a flat read. Use them wherever a real person speaking this aloud would naturally pause, emphasize, or react.
+Delivery tags and vocal performance (IMPORTANT - punctuation and rhythm do most of the work; tags are accents, not wallpaper):
+The audio is generated by xAI (Grok) TTS. First make the words themselves sound spoken: vary sentence length, use genuine questions and occasional exclamations, let a reaction land before the next fact, and do not pack every paragraph with the same cadence. Then use inline tags only where a real host would audibly shift energy.
 
-Your toolkit - the ONLY tags you may use. No other tags exist; inventing or using any tag not listed here will be read aloud as literal text and ruin the audio:
-- [pause] for a short beat, [long-pause] for a dramatic pause. These are your most useful tools.
-- <whisper>...</whisper> to drop to a conspiratorial whisper for "here's the secret" emphasis (wrap a complete phrase, never a single word).
-- <soft>...</soft> for a gentle, warm delivery.
-- <slow>...</slow> to draw out and emphasize an important takeaway or punchline.
+Your permitted toolkit - using any other tag risks it being read aloud literally:
+- Pauses and breath: [pause] for a short beat; [long-pause] only at a story transition, before a major reveal, or before the outro; [breath] or [inhale] before a longer explanation; [sigh] for disappointment or resignation.
+- Human reactions: [chuckle] for dry amusement; [laugh] only for something genuinely funny (rare). Do not use giggle/cry/mouth-sound tags in this podcast.
+- Emphasis and energy: <emphasis>...</emphasis> around one key phrase; <build-intensity>...</build-intensity> leading into a reveal; <decrease-intensity>...</decrease-intensity> for a sobering implication; <loud>...</loud> almost never.
+- Pitch and pace: <higher-pitch>...</higher-pitch> for incredulity; <lower-pitch>...</lower-pitch> for gravity; <fast>...</fast> only for a quick aside or compressed list; <slow>...</slow> for one important takeaway.
+- Intimacy: <soft>...</soft> for warmth or the sign-off; <whisper>...</whisper> at most once for a conspiratorial aside. Do not use singing tags.
 
-Where to use them (place tags inline within paragraphs, never alone on their own line):
-- A [pause] at every transition between stories, right after the connecting phrase ("Switching gears... [pause]")
-- A [pause] or [long-pause] right before a surprising reveal, key number, or punchline so it lands ("and the price tag? [long-pause] Twelve thousand dollars.")
-- <slow> around the single most important takeaway of a story
-- <whisper> for a "between you and me" aside, used rarely (once or twice)
-- Combine with punctuation for the most natural result: "Really? [pause] I did not see that coming."
-
-Aim for natural variety - several [pause]s across the script and occasional emphasis. Do not stack tags or put them on every sentence, but do use them - a flat read with zero tags sounds robotic. Remember: if a tag is not in your toolkit above, do not use it - only the five tags listed exist.
+Budgets and placement:
+- Aim for roughly 10-18 delivery tags in a full episode, never more than 2 in one paragraph and never stacked back to back.
+- Reserve [long-pause] for real chapter breaks: after the intro tease, between story groups, before a major reveal, and before the final reflection. Ordinary paragraph breaks already create short pauses; do not add [pause] to every transition.
+- Let punctuation carry ordinary emotion: a real question, a rare exclamation, an em dash, or a short fragment often beats a tag.
+- Tags must sit inline within paragraphs, never alone on a line. If a tag is not listed above, do not use it.
 `;
 }

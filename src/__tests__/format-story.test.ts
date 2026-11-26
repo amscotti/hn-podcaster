@@ -1,7 +1,7 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { expect, test } from "bun:test";
 import { formatStoryContent } from "../lib/format-story.ts";
 
-Deno.test("formatStoryContent - omits raw article body and comments", () => {
+test("formatStoryContent - omits raw article body and comments", () => {
   const formatted = formatStoryContent(
     {
       title: "Cool Project Ships",
@@ -11,29 +11,29 @@ Deno.test("formatStoryContent - omits raw article body and comments", () => {
     "Talking point: the launch matters because X.",
   );
 
-  assertStringIncludes(formatted, "## Cool Project Ships");
-  assertStringIncludes(formatted, "URL: https://example.com/post");
-  assertStringIncludes(
-    formatted,
-    "Talking point: the launch matters because X.",
-  );
-  assertStringIncludes(formatted, "### Summary and Talking Points");
+  expect(formatted).toContain("## Cool Project Ships");
+  expect(formatted).toContain("Posted Date: Tuesday, November 14");
+  expect(formatted).not.toContain("2023");
+  expect(formatted).not.toMatch(/\d{1,2}:\d{2}/);
+  expect(formatted).not.toMatch(/\b(UTC|GMT)\b/);
+  expect(formatted).toContain("URL: https://example.com/post");
+  expect(formatted).toContain("Talking point: the launch matters because X.");
+  expect(formatted).toContain("### Summary and Talking Points");
 
   // Lean payload: no full article / comment sections
-  assertEquals(formatted.includes("### Story Text"), false);
-  assertEquals(
-    formatted.includes("### Hacker News Community Discussion"),
+  expect(formatted.includes("### Story Text")).toBe(false);
+  expect(formatted.includes("### Hacker News Community Discussion")).toBe(
     false,
   );
-  assertEquals(formatted.includes("raw article body"), false);
+  expect(formatted.includes("raw article body")).toBe(false);
 });
 
-Deno.test("formatStoryContent - works without url", () => {
+test("formatStoryContent - works without url", () => {
   const formatted = formatStoryContent(
     { title: "No Link", time: 1_700_000_000 },
     "Summary only",
   );
-  assertStringIncludes(formatted, "## No Link");
-  assertEquals(formatted.includes("URL:"), false);
-  assertStringIncludes(formatted, "Summary only");
+  expect(formatted).toContain("## No Link");
+  expect(formatted.includes("URL:")).toBe(false);
+  expect(formatted).toContain("Summary only");
 });

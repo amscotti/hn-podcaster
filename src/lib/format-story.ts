@@ -8,9 +8,7 @@
  * rank order, capped at `storyCount`. Failed downloads are dropped so script
  * generation never sees empty-content placeholders.
  */
-export function keepSuccessfulDownloads<
-  T extends { text: string },
->(
+export function keepSuccessfulDownloads<T extends { text: string }>(
   stories: T[],
   storyCount: number,
 ): { kept: T[]; dropped: T[] } {
@@ -35,14 +33,11 @@ export function formatStoryContent(
 ): string {
   const formatDate = (unixTimestamp: number): string => {
     const date = new Date(unixTimestamp * 1000);
-    return date.toLocaleString("en-US", {
+    return date.toLocaleDateString("en-US", {
       weekday: "long",
-      year: "numeric",
       month: "long",
       day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZoneName: "short",
+      timeZone: "UTC",
     });
   };
 

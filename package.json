@@ -1,0 +1,30 @@
+{
+  "name": "hn-podcaster",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run app.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "tsc --noEmit && biome check .",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage"
+  },
+  "dependencies": {
+    "@logtape/logtape": "^2.4.1",
+    "@logtape/pretty": "^2.4.1",
+    "@mastra/core": "1.78.0",
+    "html-to-text": "^10.0.1",
+    "unpdf": "^1.9.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/bun": "^1.4.3",
+    "@types/html-to-text": "^9.0.4",
+    "typescript": "7.0.2"
+  }
+}

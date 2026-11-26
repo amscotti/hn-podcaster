@@ -1,5 +1,5 @@
 import { createStep } from "@mastra/core/workflows";
-import { z } from "@zod/zod";
+import { z } from "zod";
 import { fetchTopStories } from "../../lib/hackernews.ts";
 import { getAppLogger } from "../../lib/logger.ts";
 
@@ -24,8 +24,7 @@ export const fetchTopStoriesStep = createStep({
   execute: async ({ inputData }) => {
     logger.info`Fetching top ${inputData.storyCount} stories from Hacker News`;
     const storyIds = await fetchTopStories();
-    logger
-      .info`Retrieved ${storyIds.length} story IDs (will select ${inputData.storyCount} with URLs)`;
+    logger.info`Retrieved ${storyIds.length} story IDs (will select ${inputData.storyCount} with URLs)`;
     return {
       storyIds,
       storyCount: inputData.storyCount,
